@@ -1,9 +1,8 @@
 const std = @import("std");
-const Buffer = @import("Buffer.zig");
+const BufferAllocator = @import("BufferAllocator.zig");
 
 pub fn main() !void {
-    const buffer = Buffer.init(4096);
-    defer buffer.free();
+    const buffer = BufferAllocator.init(4096);
 
     const o1 = buffer.create(13);
     // const o2 = buffer.create(17);
