@@ -27,7 +27,7 @@ pub fn init(config: Config) Self {
 }
 
 fn get_bitmap(self: Self, chunk_count: usize) Bitmap {
-    return self.bitmaps[0];
+    return self.bitmaps[self.get_bitmap_index(chunk_count)];
 }
 
 pub fn create(self: Self, chunk_count: usize) ?usize {

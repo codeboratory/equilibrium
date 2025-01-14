@@ -1,5 +1,7 @@
-temperature: u8,
-key_length: []u8,
-value_length: []u8,
-hash: u64,
-data: []u8
+pub const Record = packed struct {
+    temperature: u8,
+    key_length: usize,
+    value_length: usize,
+    hash: u64,
+    data: []u8,
+};
