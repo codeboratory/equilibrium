@@ -1,226 +1,231 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const StructField = std.builtin.Type.StructField;
 
-pub const Dynamic = struct {
-    min_size: usize,
-    max_size: usize,
-};
-
-pub const Fixed = struct {
-    bit_size: usize,
+pub const Hash = struct {
+    size: type,
 };
 
 pub const Size = union(enum) {
-    dynamic: Dynamic,
-    fixed: Fixed,
+    max_size: usize,
+    size: type,
+};
+
+pub const Temperature = struct {
+    size: type,
+    warming_rate: f64,
+};
+
+pub const Ttl = struct {
+    size: type,
+    resolution: enum {
+        ms,
+        s,
+        m,
+        h,
+        d,
+    },
+};
+
+pub const Layout = enum {
+    fast,
+    small,
+};
+
+pub const Allocator = struct {
+    chunk_size: usize,
 };
 
 pub const Config = struct {
-    hash: Fixed,
+    layout: Layout,
+    hash: Hash,
     key: Size,
     value: Size,
-    temperature: Fixed,
-    ttl: ?Fixed,
+    temperature: Temperature,
+    allocator: ?Allocator,
+    ttl: ?Ttl,
 };
 
-pub fn get_struct_size(config: Config) usize {
-    const hash_size = @as(usize, config.hash.bit_size);
+const FIELD_COUNT = 10;
 
-    // std.debug.print("hash_size: {}\n", .{hash_size});
+const void_value = {};
+const constant_void = @as(?*const anyopaque, @ptrCast(&void_value));
 
-    const key_size = @as(usize, switch (config.key) {
-        .fixed => |k| k.bit_size,
-        .dynamic => 0,
-    });
-
-    // std.debug.print("key_size: {}\n", .{key_size});
-
-    const key_length_size = @as(usize, switch (config.key) {
-        .fixed => 0,
-        .dynamic => |k| bits_needed(k.max_size),
-    });
-
-    // std.debug.print("key_length_size: {}\n", .{key_length_size});
-
-    const value_size = @as(usize, switch (config.value) {
-        .fixed => |v| v.bit_size,
-        .dynamic => 0,
-    });
-
-    // std.debug.print("value_size: {}\n", .{value_size});
-
-    const value_length_size = @as(usize, switch (config.value) {
-        .fixed => 0,
-        .dynamic => |v| bits_needed(v.max_size),
-    });
-
-    // std.debug.print("value_length_size: {}\n", .{value_length_size});
-
-    const total_length_size = @as(usize, switch (config.key) {
-        .fixed => 0,
-        .dynamic => |k| switch (config.value) {
-            .fixed => 0,
-            .dynamic => |v| bits_needed(k.max_size + v.max_size),
-        },
-    });
-
-    // std.debug.print("total_length_size: {}\n", .{total_length_size});
-
-    const temperature_size = @as(usize, config.temperature.bit_size);
-
-    // std.debug.print("temperature_size: {}\n", .{temperature_size});
-
-    const ttl_size = @as(usize, if (config.ttl) |t| t.bit_size else 0);
-
-    // std.debug.print("ttl_size: {}\n", .{ttl_size});
-
-    const struct_size = @as(usize, hash_size + key_size + key_length_size + value_size + value_length_size + total_length_size + temperature_size + ttl_size);
-
-    return struct_size;
+fn cmp_struct_field_size(comptime _: [FIELD_COUNT - 1]StructField, a: StructField, b: StructField) bool {
+    return @bitSizeOf(a.type) > @bitSizeOf(b.type);
 }
 
 pub fn Record(config: Config) type {
-    const void_value = {};
-    const constant_void = @as(?*const anyopaque, @ptrCast(&void_value));
-    const struct_size_raw = get_struct_size(config);
-    const struct_size_aligned = @as(usize, @intFromFloat(std.math.ceil(@as(f64, @floatFromInt(struct_size_raw)) / 16.0) * 16.0));
-    const padding_size = struct_size_aligned - struct_size_raw;
+    if (config.allocator == null and (config.key == .max_size or config.value == .max_size)) {
+        @compileError("You have to provide allocator config");
+    }
 
-    const fields = &[_]std.builtin.Type.StructField{
-        .{
-            .name = "hash",
-            .type = std.meta.Int(.unsigned, config.hash.bit_size),
+    const fields = [FIELD_COUNT - 1]StructField{ .{
+        .name = "hash",
+        .type = config.hash.size,
+        .default_value = null,
+        .is_comptime = false,
+        .alignment = if (config.layout == .small) 0 else @alignOf(config.hash.size),
+    }, switch (config.key) {
+        .size => |k| .{
+            .name = "key",
+            .type = k,
             .default_value = null,
             .is_comptime = false,
-            .alignment = 0,
+            .alignment = if (config.layout == .small) 0 else @alignOf(k),
         },
-        if (config.ttl) |t| .{
-            .name = "ttl",
-            .type = std.meta.Int(.unsigned, t.bit_size),
-            .default_value = null,
-            .is_comptime = false,
-            .alignment = 0,
-        } else .{
-            .name = "ttl",
+        .max_size => .{
+            .name = "key",
             .type = void,
             .default_value = constant_void,
             .is_comptime = false,
             .alignment = 0,
         },
-        switch (config.key) {
-            .fixed => .{
+    }, switch (config.key) {
+        .size => .{
+            .name = "key_length",
+            .type = void,
+            .default_value = constant_void,
+            .is_comptime = false,
+            .alignment = 0,
+        },
+        .max_size => |k| .{
+            .name = "key_length",
+            .type = std.meta.Int(.unsigned, bits_needed(k)),
+            .default_value = null,
+            .is_comptime = false,
+            .alignment = if (config.layout == .small) 0 else @alignOf(std.meta.Int(.unsigned, bits_needed(k))),
+        },
+    }, switch (config.value) {
+        .size => |v| .{
+            .name = "value",
+            .type = v,
+            .default_value = null,
+            .is_comptime = false,
+            .alignment = if (config.layout == .small) 0 else @alignOf(v),
+        },
+        .max_size => .{
+            .name = "value",
+            .type = void,
+            .default_value = constant_void,
+            .is_comptime = false,
+            .alignment = 0,
+        },
+    }, switch (config.value) {
+        .size => .{
+            .name = "value_length",
+            .type = void,
+            .default_value = constant_void,
+            .is_comptime = false,
+            .alignment = 0,
+        },
+        .max_size => |v| .{
+            .name = "value_length",
+            .type = std.meta.Int(.unsigned, bits_needed(v)),
+            .default_value = null,
+            .is_comptime = false,
+            .alignment = if (config.layout == .small) 0 else @alignOf(std.meta.Int(.unsigned, bits_needed(v))),
+        },
+    }, switch (config.key) {
+        .size => .{
+            .name = "total_length",
+            .type = void,
+            .default_value = constant_void,
+            .is_comptime = false,
+            .alignment = 0,
+        },
+        .max_size => |k| switch (config.value) {
+            .size => .{
                 .name = "total_length",
                 .type = void,
                 .default_value = constant_void,
                 .is_comptime = false,
                 .alignment = 0,
             },
-            .dynamic => |k| switch (config.value) {
-                .fixed => .{
-                    .name = "total_length",
-                    .type = void,
-                    .default_value = constant_void,
-                    .is_comptime = false,
-                    .alignment = 0,
-                },
-                .dynamic => |v| .{
-                    .name = "total_length",
-                    .type = std.meta.Int(.unsigned, bits_needed(k.max_size + v.max_size)),
-                    .default_value = null,
-                    .is_comptime = false,
-                    .alignment = 0,
-                },
-            },
-        },
-        switch (config.key) {
-            .fixed => .{
-                .name = "key_length",
-                .type = void,
-                .default_value = constant_void,
-                .is_comptime = false,
-                .alignment = 0,
-            },
-            .dynamic => |k| .{
-                .name = "key_length",
-                .type = std.meta.Int(.unsigned, bits_needed(k.max_size)),
+            .max_size => |v| .{
+                .name = "total_length",
+                .type = std.meta.Int(.unsigned, bits_needed(k + v)),
                 .default_value = null,
                 .is_comptime = false,
-                .alignment = 0,
+                .alignment = if (config.layout == .small) 0 else @alignOf(std.meta.Int(.unsigned, bits_needed(k + v))),
             },
         },
-        switch (config.value) {
-            .fixed => .{
-                .name = "value_length",
-                .type = void,
-                .default_value = constant_void,
-                .is_comptime = false,
-                .alignment = 0,
-            },
-            .dynamic => |v| .{
-                .name = "value_length",
-                .type = std.meta.Int(.unsigned, bits_needed(v.max_size)),
-                .default_value = null,
-                .is_comptime = false,
-                .alignment = 0,
-            },
-        },
-        switch (config.value) {
-            .fixed => |v| .{
-                .name = "value",
-                .type = std.meta.Int(.unsigned, v.bit_size),
-                .default_value = null,
-                .is_comptime = false,
-                .alignment = 0,
-            },
-            .dynamic => .{
-                .name = "value",
-                .type = void,
-                .default_value = constant_void,
-                .is_comptime = false,
-                .alignment = 0,
-            },
-        },
-        switch (config.key) {
-            .fixed => |k| .{
-                .name = "key",
-                .type = std.meta.Int(.unsigned, k.bit_size),
-                .default_value = null,
-                .is_comptime = false,
-                .alignment = 0,
-            },
-            .dynamic => .{
-                .name = "key",
-                .type = void,
-                .default_value = constant_void,
-                .is_comptime = false,
-                .alignment = 0,
-            },
-        },
-        .{
-            .name = "temperature",
-            .type = std.meta.Int(.unsigned, config.temperature.bit_size),
-            .default_value = null,
-            .is_comptime = false,
-            .alignment = 0,
-        },
-        .{
-            .name = "padding",
-            .type = std.meta.Int(.unsigned, padding_size),
-            .default_value = @as(?*const anyopaque, @ptrCast(&@as(std.meta.Int(.unsigned, padding_size), 0))),
-            .is_comptime = false,
-            .alignment = 0,
-        },
-    };
+    }, .{
+        .name = "temperature",
+        .type = config.temperature.size,
+        .default_value = null,
+        .is_comptime = false,
+        .alignment = if (config.layout == .small) 0 else @alignOf(config.temperature.size),
+    }, if (config.ttl) |t| .{
+        .name = "ttl",
+        .type = t.size,
+        .default_value = null,
+        .is_comptime = false,
+        .alignment = if (config.layout == .small) 0 else @alignOf(t.size),
+    } else .{
+        .name = "ttl",
+        .type = void,
+        .default_value = constant_void,
+        .is_comptime = false,
+        .alignment = 0,
+    }, if (config.allocator != null and (config.key == .max_size or config.value == .max_size)) .{
+        .name = "data",
+        .type = [*]u8,
+        .default_value = null,
+        .is_comptime = false,
+        .alignment = if (config.layout == .small) 0 else @alignOf([*]u8),
+    } else .{
+        .name = "data",
+        .type = void,
+        .default_value = constant_void,
+        .is_comptime = false,
+        .alignment = 0,
+    } };
 
-    return @Type(.{
-        .Struct = .{
-            .layout = .@"packed",
-            .backing_integer = std.meta.Int(.unsigned, struct_size_aligned),
-            .fields = fields,
-            .decls = &.{},
-            .is_tuple = false,
-        },
-    });
+    if (config.layout == .fast) {
+        const sorted_fields = comptime blk: {
+            var mutable_fields = fields;
+            std.mem.sort(StructField, &mutable_fields, fields, cmp_struct_field_size);
+            break :blk mutable_fields;
+        };
+
+        return @Type(.{
+            .Struct = .{
+                .layout = .auto,
+                .fields = &sorted_fields,
+                .decls = &.{},
+                .is_tuple = false,
+            },
+        });
+    } else {
+        var struct_size_raw = 0;
+        for (fields) |field| {
+            struct_size_raw += @bitSizeOf(field.type);
+        }
+
+        const struct_size_aligned = @as(usize, @intFromFloat(std.math.ceil(@as(f64, @floatFromInt(struct_size_raw)) / 16.0) * 16.0));
+        const padding_size = struct_size_aligned - struct_size_raw;
+
+        const padded_fields = fields ++ [1]StructField{
+            .{
+                .name = "padding",
+                .type = std.meta.Int(.unsigned, padding_size),
+                .default_value = @as(?*const anyopaque, @ptrCast(&@as(std.meta.Int(.unsigned, padding_size), 0))),
+                .is_comptime = false,
+                .alignment = if (config.layout == .small) 0 else @alignOf(std.meta.Int(.unsigned, padding_size)),
+            },
+        };
+
+        return @Type(.{
+            .Struct = .{
+                .layout = .@"packed",
+                .backing_integer = std.meta.Int(.unsigned, struct_size_aligned),
+                .fields = &padded_fields,
+                .decls = &.{},
+                .is_tuple = false,
+            },
+        });
+    }
 }
 
 pub fn bits_needed(number: u64) u16 {
@@ -236,22 +241,34 @@ pub fn bits_needed(number: u64) u16 {
 }
 
 test "Record" {
+    const allocator = std.testing.allocator;
+    const data = try allocator.alloc(u8, 10);
+    defer allocator.free(data);
+
     const config = Config{
+        .layout = .small,
         .hash = .{
-            .bit_size = 64,
+            .size = u64,
         },
-        .key = .{ .fixed = .{
-            .bit_size = 8,
-        } },
-        .value = .{ .dynamic = .{
-            .min_size = 128 * 1024,
-            .max_size = 1024 * 1024,
-        } },
+        // .key = .{
+        //     .size = u8,
+        // },
+        .key = .{
+            .max_size = 256,
+        },
+        .value = .{
+            .max_size = 64 * 1024 * 1024,
+        },
         .temperature = .{
-            .bit_size = 8,
+            .size = u8,
+            .warming_rate = 0.05,
         },
         .ttl = .{
-            .bit_size = 28,
+            .size = u26,
+            .resolution = .s,
+        },
+        .allocator = .{
+            .chunk_size = 32 * 1024,
         },
     };
 
@@ -259,10 +276,13 @@ test "Record" {
 
     const record = CustomRecord{
         .hash = 12356,
-        .key = 69,
+        // .key = 69,
+        .key_length = 69,
         .value_length = 384 * 1024,
+        .total_length = (384 * 1024) + 69,
         .temperature = 127,
-        .ttl = 4343312,
+        .ttl = 43433,
+        .data = data.ptr,
     };
 
     std.debug.print("bit_size: {}\n", .{@bitSizeOf(CustomRecord)});
