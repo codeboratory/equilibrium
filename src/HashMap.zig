@@ -1,291 +1,162 @@
 const std = @import("std");
-const builtin = @import("builtin");
-const StructField = std.builtin.Type.StructField;
+const Config = @import("Config.zig");
+const createRecord = @import("Record.zig").create;
+const xxhash = std.hash.XxHash64.hash;
+const Utils = @import("Utils.zig");
 
-pub const Hash = struct {
-    size: type,
-};
-
-pub const Size = union(enum) {
-    max_size: usize,
-    size: type,
-};
-
-pub const Temperature = struct {
-    size: type,
-    warming_rate: f64,
-};
-
-pub const Ttl = struct {
-    size: type,
-    resolution: enum {
-        ms,
-        s,
-        m,
-        h,
-        d,
-    },
-};
-
-pub const Layout = enum {
-    fast,
-    small,
-};
-
-pub const Allocator = struct {
-    chunk_size: usize,
-};
-
-pub const Config = struct {
-    layout: Layout,
-    hash: Hash,
-    key: Size,
-    value: Size,
-    temperature: Temperature,
-    allocator: ?Allocator,
-    ttl: ?Ttl,
-};
-
-const FIELD_COUNT = 10;
-
+const allocator = std.heap.page_allocator;
 const void_value = {};
 const constant_void = @as(?*const anyopaque, @ptrCast(&void_value));
 
-fn cmp_struct_field_size(comptime _: [FIELD_COUNT - 1]StructField, a: StructField, b: StructField) bool {
-    return @bitSizeOf(a.type) > @bitSizeOf(b.type);
-}
+pub fn create(config: Config) type {
+    const Record = createRecord(config);
 
-pub fn Record(config: Config) type {
-    if (config.allocator == null and (config.key == .max_size or config.value == .max_size)) {
-        @compileError("You have to provide allocator config");
-    }
+    const ttl_type = if (config.record.ttl) |t| t.size else void;
 
-    const fields = [FIELD_COUNT - 1]StructField{ .{
-        .name = "hash",
-        .type = config.hash.size,
-        .default_value = null,
-        .is_comptime = false,
-        .alignment = if (config.layout == .small) 0 else @alignOf(config.hash.size),
-    }, switch (config.key) {
-        .size => |k| .{
-            .name = "key",
-            .type = k,
-            .default_value = null,
-            .is_comptime = false,
-            .alignment = if (config.layout == .small) 0 else @alignOf(k),
-        },
-        .max_size => .{
-            .name = "key",
-            .type = void,
-            .default_value = constant_void,
-            .is_comptime = false,
-            .alignment = 0,
-        },
-    }, switch (config.key) {
-        .size => .{
-            .name = "key_length",
-            .type = void,
-            .default_value = constant_void,
-            .is_comptime = false,
-            .alignment = 0,
-        },
-        .max_size => |k| .{
-            .name = "key_length",
-            .type = std.meta.Int(.unsigned, bits_needed(k)),
-            .default_value = null,
-            .is_comptime = false,
-            .alignment = if (config.layout == .small) 0 else @alignOf(std.meta.Int(.unsigned, bits_needed(k))),
-        },
-    }, switch (config.value) {
-        .size => |v| .{
-            .name = "value",
-            .type = v,
-            .default_value = null,
-            .is_comptime = false,
-            .alignment = if (config.layout == .small) 0 else @alignOf(v),
-        },
-        .max_size => .{
-            .name = "value",
-            .type = void,
-            .default_value = constant_void,
-            .is_comptime = false,
-            .alignment = 0,
-        },
-    }, switch (config.value) {
-        .size => .{
-            .name = "value_length",
-            .type = void,
-            .default_value = constant_void,
-            .is_comptime = false,
-            .alignment = 0,
-        },
-        .max_size => |v| .{
-            .name = "value_length",
-            .type = std.meta.Int(.unsigned, bits_needed(v)),
-            .default_value = null,
-            .is_comptime = false,
-            .alignment = if (config.layout == .small) 0 else @alignOf(std.meta.Int(.unsigned, bits_needed(v))),
-        },
-    }, switch (config.key) {
-        .size => .{
-            .name = "total_length",
-            .type = void,
-            .default_value = constant_void,
-            .is_comptime = false,
-            .alignment = 0,
-        },
-        .max_size => |k| switch (config.value) {
-            .size => .{
-                .name = "total_length",
-                .type = void,
-                .default_value = constant_void,
-                .is_comptime = false,
-                .alignment = 0,
-            },
-            .max_size => |v| .{
-                .name = "total_length",
-                .type = std.meta.Int(.unsigned, bits_needed(k + v)),
-                .default_value = null,
-                .is_comptime = false,
-                .alignment = if (config.layout == .small) 0 else @alignOf(std.meta.Int(.unsigned, bits_needed(k + v))),
-            },
-        },
-    }, .{
-        .name = "temperature",
-        .type = config.temperature.size,
-        .default_value = null,
-        .is_comptime = false,
-        .alignment = if (config.layout == .small) 0 else @alignOf(config.temperature.size),
-    }, if (config.ttl) |t| .{
-        .name = "ttl",
-        .type = t.size,
-        .default_value = null,
-        .is_comptime = false,
-        .alignment = if (config.layout == .small) 0 else @alignOf(t.size),
-    } else .{
-        .name = "ttl",
-        .type = void,
-        .default_value = constant_void,
-        .is_comptime = false,
-        .alignment = 0,
-    }, if (config.allocator != null and (config.key == .max_size or config.value == .max_size)) .{
-        .name = "data",
-        .type = [*]u8,
-        .default_value = null,
-        .is_comptime = false,
-        .alignment = if (config.layout == .small) 0 else @alignOf([*]u8),
-    } else .{
-        .name = "data",
-        .type = void,
-        .default_value = constant_void,
-        .is_comptime = false,
-        .alignment = 0,
-    } };
+    const HashMap = struct {
+        const Self = @This();
 
-    if (config.layout == .fast) {
-        const sorted_fields = comptime blk: {
-            var mutable_fields = fields;
-            std.mem.sort(StructField, &mutable_fields, fields, cmp_struct_field_size);
-            break :blk mutable_fields;
-        };
+        records: [config.table.record_count]Record,
 
-        return @Type(.{
-            .Struct = .{
-                .layout = .auto,
-                .fields = &sorted_fields,
-                .decls = &.{},
-                .is_tuple = false,
-            },
-        });
-    } else {
-        var struct_size_raw = 0;
-        for (fields) |field| {
-            struct_size_raw += @bitSizeOf(field.type);
+        pub fn init() Self {
+            return Self{
+                .records = [_]Record{undefined} ** config.table.record_count,
+            };
         }
 
-        const struct_size_aligned = @as(usize, @intFromFloat(std.math.ceil(@as(f64, @floatFromInt(struct_size_raw)) / 16.0) * 16.0));
-        const padding_size = struct_size_aligned - struct_size_raw;
+        pub fn put(self: *Self, hash: config.record.hash.size, key: []u8, value: []u8, ttl: ttl_type) !void {
+            self.records[0] = Record{
+                .hash = hash,
+                .key = switch (config.record.key) {
+                    .size => block: {
+                        const bytes = @sizeOf(config.record.key.size);
+                        var tmp_array: [bytes]u8 = undefined;
 
-        const padded_fields = fields ++ [1]StructField{
-            .{
-                .name = "padding",
-                .type = std.meta.Int(.unsigned, padding_size),
-                .default_value = @as(?*const anyopaque, @ptrCast(&@as(std.meta.Int(.unsigned, padding_size), 0))),
-                .is_comptime = false,
-                .alignment = if (config.layout == .small) 0 else @alignOf(std.meta.Int(.unsigned, padding_size)),
-            },
-        };
+                        @memset(tmp_array[0..], 0);
+                        @memcpy(tmp_array[0..key.len], key);
 
-        return @Type(.{
-            .Struct = .{
-                .layout = .@"packed",
-                .backing_integer = std.meta.Int(.unsigned, struct_size_aligned),
-                .fields = &padded_fields,
-                .decls = &.{},
-                .is_tuple = false,
-            },
-        });
-    }
-}
+                        break :block std.mem.readInt(config.record.key.size, &tmp_array, .big);
+                    },
+                    .max_size => {},
+                },
+                .key_length = switch (config.record.key) {
+                    .size => {},
+                    .max_size => @intCast(key.len),
+                },
+                .value = switch (config.record.value) {
+                    .size => block: {
+                        const bytes = @sizeOf(config.record.value.size);
+                        var tmp_array: [bytes]u8 = undefined;
 
-pub fn bits_needed(number: u64) u16 {
-    if (number == 0) return 1;
+                        @memset(tmp_array[0..], 0);
+                        @memcpy(tmp_array[0..value.len], value);
 
-    var n = number;
-    var bits: u16 = 0;
-    while (n > 0) : (bits += 1) {
-        n >>= 1;
-    }
+                        break :block std.mem.readInt(config.record.value.size, &tmp_array, .big);
+                    },
+                    .max_size => {},
+                },
+                .value_length = switch (config.record.value) {
+                    .size => {},
+                    .max_size => @intCast(value.len),
+                },
+                .total_length = switch (config.record.key) {
+                    .size => {},
+                    .max_size => |k| switch (config.record.value) {
+                        .size => {},
+                        .max_size => |v| @as(std.meta.Int(.unsigned, Utils.bits_needed(k + v)), @intCast(key.len + value.len)),
+                    },
+                },
+                .temperature = 127,
+                .ttl = if (config.record.ttl == null) {} else ttl,
+                .data = block: {
+                    if (config.record.key == .size and config.record.value == .size) {
+                        break :block {};
+                    } else {
+                        const total_length = length: {
+                            const key_length = switch (config.record.key) {
+                                .size => 0,
+                                .max_size => key.len,
+                            };
 
-    return bits;
+                            const value_length = switch (config.record.value) {
+                                .size => 0,
+                                .max_size => value.len,
+                            };
+
+                            break :length key_length + value_length;
+                        };
+
+                        const data = try allocator.alloc(u8, total_length);
+
+                        if (config.record.key == .max_size and config.record.value == .size) {
+                            @memcpy(data, key);
+                        }
+
+                        if (config.record.key == .size and config.record.value == .max_size) {
+                            @memcpy(data, value);
+                        }
+
+                        if (config.record.key == .max_size and config.record.value == .max_size) {
+                            @memcpy(data[0..key.len], key);
+                            @memcpy(data[key.len .. key.len + value.len], value);
+                        }
+
+                        break :block data.ptr;
+                    }
+                },
+            };
+        }
+
+        pub fn check(self: Self) void {
+            const records = self.records;
+
+            std.debug.print("check: {any}\n", .{records[0]});
+        }
+    };
+
+    return HashMap;
 }
 
 test "Record" {
-    const allocator = std.testing.allocator;
-    const data = try allocator.alloc(u8, 10);
-    defer allocator.free(data);
-
     const config = Config{
-        .layout = .small,
-        .hash = .{
-            .size = u64,
+        .record = .{
+            .layout = .small,
+            .hash = .{
+                .size = u64,
+            },
+            .key = .{
+                .size = u64,
+                // .max_size = 1024,
+            },
+            .value = .{
+                // .size = u256,
+                .max_size = 64 * 1024 * 1024, // 64 Mb
+            },
+            .temperature = .{
+                .size = u8,
+                .warming_rate = 0.05,
+            },
+            .ttl = null,
+            // .ttl = .{
+            //     .size = u20,
+            //     .resolution = .s,
+            // },
         },
-        // .key = .{
-        //     .size = u8,
-        // },
-        .key = .{
-            .max_size = 256,
-        },
-        .value = .{
-            .max_size = 64 * 1024 * 1024,
-        },
-        .temperature = .{
-            .size = u8,
-            .warming_rate = 0.05,
-        },
-        .ttl = .{
-            .size = u26,
-            .resolution = .s,
+        .table = .{
+            .record_count = 1024,
         },
         .allocator = .{
-            .chunk_size = 32 * 1024,
+            .chunk_size = 32 * 1024, // 32 Kb
         },
     };
 
-    const CustomRecord = Record(config);
+    const hash = xxhash(0, "hashhash");
+    const key: []u8 = @constCast("hashhash")[0..];
+    const value: []u8 = @constCast("Hello, World!")[0..];
 
-    const record = CustomRecord{
-        .hash = 12356,
-        // .key = 69,
-        .key_length = 69,
-        .value_length = 384 * 1024,
-        .total_length = (384 * 1024) + 69,
-        .temperature = 127,
-        .ttl = 43433,
-        .data = data.ptr,
-    };
+    var hash_map = create(config).init();
 
-    std.debug.print("bit_size: {}\n", .{@bitSizeOf(CustomRecord)});
-    std.debug.print("align: {}\n", .{@alignOf(CustomRecord)});
-    std.debug.print("record: {any}\n", .{record});
+    hash_map.check();
+    try hash_map.put(hash, key, value, {});
+    hash_map.check();
 }
