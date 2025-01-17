@@ -3,11 +3,9 @@ const builtin = @import("builtin");
 const StructField = std.builtin.Type.StructField;
 const Config = @import("Config.zig");
 const Utils = @import("Utils.zig");
+const Constants = @import("Constants.zig");
 
 const FIELD_COUNT = 10;
-
-const void_value = {};
-const constant_void = @as(?*const anyopaque, @ptrCast(&void_value));
 
 pub fn create(config: Config) type {
     if (config.allocator == null and (config.key == .max_size or config.value == .max_size)) {
@@ -31,7 +29,7 @@ pub fn create(config: Config) type {
         .max_size => .{
             .name = "key",
             .type = void,
-            .default_value = constant_void,
+            .default_value = Constants.constant_void,
             .is_comptime = false,
             .alignment = 0,
         },
@@ -39,7 +37,7 @@ pub fn create(config: Config) type {
         .size => .{
             .name = "key_length",
             .type = void,
-            .default_value = constant_void,
+            .default_value = Constants.constant_void,
             .is_comptime = false,
             .alignment = 0,
         },
@@ -61,7 +59,7 @@ pub fn create(config: Config) type {
         .max_size => .{
             .name = "value",
             .type = void,
-            .default_value = constant_void,
+            .default_value = Constants.constant_void,
             .is_comptime = false,
             .alignment = 0,
         },
@@ -69,7 +67,7 @@ pub fn create(config: Config) type {
         .size => .{
             .name = "value_length",
             .type = void,
-            .default_value = constant_void,
+            .default_value = Constants.constant_void,
             .is_comptime = false,
             .alignment = 0,
         },
@@ -84,7 +82,7 @@ pub fn create(config: Config) type {
         .size => .{
             .name = "total_length",
             .type = void,
-            .default_value = constant_void,
+            .default_value = Constants.constant_void,
             .is_comptime = false,
             .alignment = 0,
         },
@@ -92,7 +90,7 @@ pub fn create(config: Config) type {
             .size => .{
                 .name = "total_length",
                 .type = void,
-                .default_value = constant_void,
+                .default_value = Constants.constant_void,
                 .is_comptime = false,
                 .alignment = 0,
             },
@@ -119,7 +117,7 @@ pub fn create(config: Config) type {
     } else .{
         .name = "ttl",
         .type = void,
-        .default_value = constant_void,
+        .default_value = Constants.constant_void,
         .is_comptime = false,
         .alignment = 0,
     }, if (config.allocator != null and (config.record.key == .max_size or config.record.value == .max_size)) .{
@@ -131,7 +129,7 @@ pub fn create(config: Config) type {
     } else .{
         .name = "data",
         .type = void,
-        .default_value = constant_void,
+        .default_value = Constants.constant_void,
         .is_comptime = false,
         .alignment = 0,
     } };

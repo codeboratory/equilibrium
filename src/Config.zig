@@ -15,7 +15,6 @@ const Temperature = struct {
 const Ttl = struct {
     size: type,
     resolution: enum {
-        ms,
         s,
         m,
         h,
