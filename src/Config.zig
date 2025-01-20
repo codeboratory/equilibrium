@@ -1,35 +1,32 @@
 // NOTE: maybe add a function since this config will
 // most likely be also used for proxy
 const Hash = struct {
-    size: type,
+    type: type,
 };
 
 const Size = union(enum) {
     max_size: usize,
-    // NOTE: shouldn't it be called type?
-    size: type,
+    type: type,
 };
 
 const Temperature = struct {
-    // NOTE: shouldn't it be called type?
-    size: type,
+    type: type,
     warming_rate: f64,
 };
 
 const Ttl = struct {
-    // NOTE: shouldn't it be called type?
-    size: type,
-    // NOTE: is there any use case for ms or months/years?
+    type: type,
     resolution: enum {
-        s,
-        m,
-        h,
-        d,
+        milisecond,
+        second,
+        minute,
+        hour,
+        day,
+        month,
+        year,
     },
 };
 
-// NOTE: maybe call it packed and auto
-// to not confuse myself?
 const Layout = enum {
     fast,
     small,

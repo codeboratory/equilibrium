@@ -15,9 +15,9 @@ pub fn create(config: Config) type {
 
     // NOTE: maybe I could create a new struct which
     // will hold all these pre-computed config sizes
-    const ttl_type = if (config.record.ttl) |t| t.size else void;
+    const ttl_type = if (config.record.ttl) |t| t.type else void;
     const buffer_size = switch (config.record.value) {
-        .size => |size| @sizeOf(size),
+        .type => |size| @sizeOf(size),
         .max_size => 0,
     };
 
@@ -36,7 +36,7 @@ pub fn create(config: Config) type {
             };
         }
 
-        pub fn put(self: *Self, hash: config.record.hash.size, key: []u8, value: []u8, ttl: ttl_type) !void {
+        pub fn put(self: *Self, hash: config.record.hash.type, key: []u8, value: []u8, ttl: ttl_type) !void {
             const index = hash % config.record.count;
             const record = self.records[index];
 
@@ -44,8 +44,8 @@ pub fn create(config: Config) type {
             // I think this is wrong and it doesn't work the way I want it to work
             if (record.hash == hash or std.mem.eql(u8, key, switch (config.record.key) {
                 // NOTE: could this be done in one step?
-                .size => block: {
-                    const bytes = @sizeOf(config.record.key.size);
+                .type => block: {
+                    const bytes = @sizeOf(config.record.key.type);
                     // NOTE: will this work the same on big endian
                     const size = bytes - (@clz(record.key) / 8);
                     const num: []u8 = @constCast(&@as([bytes]u8, @bitCast(record.key)))[0..size];
@@ -54,7 +54,7 @@ pub fn create(config: Config) type {
                 },
                 .max_size => record.data[0..record.key_length],
                 // TODO: precompute random values
-            }) or record.temperature < random.intRangeAtMost(config.record.temperature.size, 0, std.math.maxInt(config.record.temperature.size))) {
+            }) or record.temperature < random.intRangeAtMost(config.record.temperature.type, 0, std.math.maxInt(config.record.temperature.type))) {
                 self.free(record);
 
                 // NOTE: maybe move into Record?
@@ -62,68 +62,68 @@ pub fn create(config: Config) type {
                     .hash = hash,
                     .key = switch (config.record.key) {
                         // NOTE: could this be done in one step?
-                        .size => block: {
-                            const bytes = @sizeOf(config.record.key.size);
+                        .type => block: {
+                            const bytes = @sizeOf(config.record.key.type);
                             var tmp_array: [bytes]u8 = undefined;
 
                             @memset(tmp_array[0..], 0);
                             @memcpy(tmp_array[0..key.len], key);
 
-                            break :block std.mem.readInt(config.record.key.size, &tmp_array, Constants.native_endian);
+                            break :block std.mem.readInt(config.record.key.type, &tmp_array, Constants.native_endian);
                         },
                         .max_size => {},
                     },
                     .key_length = switch (config.record.key) {
-                        .size => {},
+                        .type => {},
                         .max_size => @intCast(key.len),
                     },
                     .value = switch (config.record.value) {
                         // NOTE: could this be done in one step?
-                        .size => block: {
-                            const bytes = @sizeOf(config.record.value.size);
+                        .type => block: {
+                            const bytes = @sizeOf(config.record.value.type);
                             var tmp_array: [bytes]u8 = undefined;
 
                             @memset(tmp_array[0..], 0);
                             @memcpy(tmp_array[0..value.len], value);
 
-                            break :block std.mem.readInt(config.record.value.size, &tmp_array, Constants.native_endian);
+                            break :block std.mem.readInt(config.record.value.type, &tmp_array, Constants.native_endian);
                         },
                         .max_size => {},
                     },
                     .value_length = switch (config.record.value) {
-                        .size => {},
+                        .type => {},
                         .max_size => @intCast(value.len),
                     },
                     .total_length = switch (config.record.key) {
-                        .size => {},
+                        .type => {},
                         .max_size => |k| switch (config.record.value) {
-                            .size => {},
+                            .type => {},
                             .max_size => |v| @as(std.meta.Int(.unsigned, Utils.bits_needed(k + v)), @intCast(key.len + value.len)),
                         },
                     },
-                    .temperature = std.math.maxInt(config.record.temperature.size) / 2,
+                    .temperature = std.math.maxInt(config.record.temperature.type) / 2,
                     .ttl = if (config.record.ttl == null) {} else ttl,
                     .data = block: {
-                        if (config.record.key == .size and config.record.value == .size) {
+                        if (config.record.key == .type and config.record.value == .type) {
                             break :block undefined;
                         } else {
                             const key_length = switch (config.record.key) {
-                                .size => 0,
+                                .type => 0,
                                 .max_size => key.len,
                             };
 
                             const value_length = switch (config.record.value) {
-                                .size => 0,
+                                .type => 0,
                                 .max_size => value.len,
                             };
 
                             const data = try allocator.alloc(u8, key_length + value_length);
 
-                            if (config.record.key == .max_size and config.record.value == .size) {
+                            if (config.record.key == .max_size and config.record.value == .type) {
                                 @memcpy(data, key);
                             }
 
-                            if (config.record.key == .size and config.record.value == .max_size) {
+                            if (config.record.key == .type and config.record.value == .max_size) {
                                 @memcpy(data, value);
                             }
 
@@ -139,13 +139,13 @@ pub fn create(config: Config) type {
             }
         }
 
-        pub fn get(self: *Self, hash: config.record.hash.size, key: []u8) ?[]u8 {
+        pub fn get(self: *Self, hash: config.record.hash.type, key: []u8) ?[]u8 {
             var record = self.records[hash % config.record.count];
 
             if (record.hash == 0 or record.hash != hash or std.mem.eql(u8, key, switch (config.record.key) {
                 // NOTE: ugh I don't like this
-                .size => block: {
-                    const bytes = @sizeOf(config.record.key.size);
+                .type => block: {
+                    const bytes = @sizeOf(config.record.key.type);
                     const size = bytes - (@clz(record.key) / 8);
                     const num: []u8 = @constCast(&@as([bytes]u8, @bitCast(record.key)))[0..size];
 
@@ -171,28 +171,28 @@ pub fn create(config: Config) type {
 
             // TODO: precompute random values
             if (random.float(f64) < config.record.temperature.warming_rate) {
-                record.temperature = if (record.temperature < std.math.maxInt(config.record.temperature.size) - 1) record.temperature + 1 else 0;
+                record.temperature = if (record.temperature < std.math.maxInt(config.record.temperature.type) - 1) record.temperature + 1 else 0;
 
                 // TODO: precompute random values
                 var victim = self.records[random.intRangeAtMost(usize, 0, config.record.count)];
 
-                victim.temperature = if (victim.temperature < std.math.maxInt(config.record.temperature.size) - 1) victim.temperature + 1 else 0;
+                victim.temperature = if (victim.temperature < std.math.maxInt(config.record.temperature.type) - 1) victim.temperature + 1 else 0;
             }
 
             return switch (config.record.value) {
                 // NOTE: ugh I don't like this
-                .size => block: {
-                    const bytes = @sizeOf(config.record.value.size);
+                .type => block: {
+                    const bytes = @sizeOf(config.record.value.type);
                     const size = bytes - (@clz(record.value) / 8);
                     const num: []u8 = @constCast(&@as([bytes]u8, @bitCast(record.value)))[0..size];
 
                     @memset(self.buffer[0..], 0);
-                    @memcpy(self.buffer[0..size], num);
+                    @memcpy(self.buffer[0..type], num);
 
-                    break :block self.buffer[0..size];
+                    break :block self.buffer[0..type];
                 },
                 .max_size => switch (config.record.key) {
-                    .size => record.data[0..record.value_length],
+                    .type => record.data[0..record.value_length],
                     .max_size => record.data[record.key_length .. record.key_length + record.value_length],
                 },
             };
@@ -200,35 +200,35 @@ pub fn create(config: Config) type {
 
         fn free(_: Self, record: Record) void {
             if (switch (config.record.key) {
-                .size => switch (config.record.value) {
-                    .size => false,
+                .type => switch (config.record.value) {
+                    .type => false,
                     .max_size => record.value_length != 0,
                 },
                 .max_size => switch (config.record.value) {
-                    .size => record.key_length != 0,
+                    .type => record.key_length != 0,
                     .max_size => record.total_length != 0,
                 },
             }) {
                 allocator.free(record.data[0..switch (config.record.key) {
-                    .size => switch (config.record.value) {
-                        .size => unreachable,
+                    .type => switch (config.record.value) {
+                        .type => unreachable,
                         .max_size => record.value_length,
                     },
                     .max_size => switch (config.record.value) {
-                        .size => record.key_length,
+                        .type => record.key_length,
                         .max_size => record.total_length,
                     },
                 }]);
             }
         }
 
-        pub fn delete(self: *Self, hash: config.record.hash.size, key: []u8) void {
+        pub fn delete(self: *Self, hash: config.record.hash.type, key: []u8) void {
             const record = self.records[hash % config.record.count];
 
             if (record.hash == hash and std.mem.eql(u8, key, switch (config.record.key) {
                 // NOTE: ugh I don't like this
-                .size => block: {
-                    const bytes = @sizeOf(config.record.key.size);
+                .type => block: {
+                    const bytes = @sizeOf(config.record.key.type);
                     const size = bytes - (@clz(record.key) / 8);
                     const num: []u8 = @constCast(&@as([bytes]u8, @bitCast(record.key)))[0..size];
 
@@ -250,25 +250,25 @@ test "Record" {
     const config = Config{
         .record = .{
             .count = 1024,
-            .layout = .small,
+            .layout = .fast,
             .hash = .{
-                .size = u64,
+                .type = u64,
             },
             .key = .{
-                .size = u64,
+                .type = u64,
                 // .max_size = 1024,
             },
             .value = .{
-                // .size = u256,
+                // .type = u256,
                 .max_size = 64 * 1024 * 1024, // 64 Mb
             },
             .temperature = .{
-                .size = u8,
+                .type = u8,
                 .warming_rate = 0.05,
             },
             .ttl = null,
             // .ttl = .{
-            //     .size = u25,
+            //     .type = u25,
             //     .resolution = .s,
             // },
         },
@@ -281,7 +281,9 @@ test "Record" {
     const key: []u8 = @constCast("hashhash")[0..];
     const value: []u8 = @constCast("Hello, World!")[0..];
 
-    var hash_map = create(config).init();
+    const HashMap = create(config);
+
+    var hash_map = HashMap.init();
 
     try expect(hash_map.get(hash, key) == null);
 
