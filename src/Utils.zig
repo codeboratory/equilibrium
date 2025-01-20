@@ -1,3 +1,4 @@
+// NOTE: could this be simplified?
 pub fn bits_needed(number: u64) u16 {
     if (number == 0) return 1;
 

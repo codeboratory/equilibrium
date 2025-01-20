@@ -5,6 +5,7 @@ const Config = @import("Config.zig");
 const Utils = @import("Utils.zig");
 const Constants = @import("Constants.zig");
 
+// NOTE: could I make it work without this?
 const FIELD_COUNT = 10;
 
 pub fn create(config: Config) type {
@@ -12,6 +13,7 @@ pub fn create(config: Config) type {
         @compileError("You have to provide allocator config");
     }
 
+    // TODO: remove all default values
     const fields = [FIELD_COUNT - 1]StructField{ .{
         .name = "hash",
         .type = config.record.hash.size,
@@ -135,6 +137,7 @@ pub fn create(config: Config) type {
     } };
 
     if (config.record.layout == .fast) {
+        // NOTE: does this actually help?
         const sorted_fields = comptime blk: {
             var mutable_fields = fields;
             std.mem.sort(StructField, &mutable_fields, fields, cmp_struct_field_size);
@@ -155,6 +158,7 @@ pub fn create(config: Config) type {
             struct_size_raw += @bitSizeOf(field.type);
         }
 
+        // NOTE: should it always be aligned to the closest multiple of 16?
         const struct_size_aligned = @as(usize, @intFromFloat(std.math.ceil(@as(f64, @floatFromInt(struct_size_raw)) / 16.0) * 16.0));
         const padding_size = struct_size_aligned - struct_size_raw;
 
@@ -164,6 +168,7 @@ pub fn create(config: Config) type {
                 .type = std.meta.Int(.unsigned, padding_size),
                 .default_value = @as(?*const anyopaque, @ptrCast(&@as(std.meta.Int(.unsigned, padding_size), 0))),
                 .is_comptime = false,
+                // TODO: hardcode zero??
                 .alignment = if (config.record.layout == .small) 0 else @alignOf(std.meta.Int(.unsigned, padding_size)),
             },
         };
