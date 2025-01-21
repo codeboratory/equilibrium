@@ -14,11 +14,6 @@ const allocator = std.heap.page_allocator;
 pub fn create(config: Config) type {
     const CustomRecord = Record.create(config);
 
-    const buffer_size = switch (config.record.value) {
-        .type => |size| @sizeOf(size),
-        .max_size => 0,
-    };
-
     const HashMap = struct {
         const Self = @This();
 
@@ -27,7 +22,6 @@ pub fn create(config: Config) type {
         random_temperature: Random.create(config.record.temperature.type),
 
         records: [config.record.count]CustomRecord,
-        buffer: [buffer_size]u8,
 
         pub fn init() Self {
             return Self{
@@ -36,7 +30,6 @@ pub fn create(config: Config) type {
                 .random_temperature = Random.create(config.record.temperature.type).init(config.record.count, std.math.maxInt(config.record.temperature.type)),
 
                 .records = [_]CustomRecord{undefined} ** config.record.count,
-                .buffer = [_]u8{0} ** buffer_size,
             };
         }
 
@@ -48,13 +41,6 @@ pub fn create(config: Config) type {
             } else {
                 return hash % (config.record.count - 1);
             }
-        }
-
-        pub fn peek(self: Self, hash: config.record.hash.type) CustomRecord {
-            const index = get_index(hash);
-            const record = self.records[index];
-
-            return record;
         }
 
         pub fn put(self: *Self, hash: config.record.hash.type, key: []u8, value: []u8) !void {
@@ -209,7 +195,7 @@ pub fn create(config: Config) type {
 
             if (hash_equals and key_equals) {
                 self.free(record);
-                self.records[get_index(hash)] = undefined;
+                self.records[index] = undefined;
             }
         }
     };
