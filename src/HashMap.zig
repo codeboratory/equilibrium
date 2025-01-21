@@ -46,13 +46,13 @@ pub fn create(config: Config) type {
         pub fn put(self: *Self, hash: config.record.hash.type, key: []u8, value: []u8) !void {
             if (config.record.key == .type) {
                 if (key.len != @sizeOf(config.record.key.type)) {
-                    @panic("Key has wrong byte length");
+                    return error.InvalidKeyLength;
                 }
             }
 
             if (config.record.value == .type) {
                 if (value.len != @sizeOf(config.record.value.type)) {
-                    @panic("Value has wrong byte length");
+                    return error.InvalidKeyLength;
                 }
             }
 
