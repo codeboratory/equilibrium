@@ -1,5 +1,3 @@
-// NOTE: maybe add a function since this config will
-// most likely be also used for proxy
 const Hash = struct {
     type: type,
 };

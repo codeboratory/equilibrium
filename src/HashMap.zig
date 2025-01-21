@@ -2,11 +2,11 @@ const std = @import("std");
 const Config = @import("Config.zig");
 // NOTE: I don't like the import
 const createRecord = @import("Record.zig").create;
+const Random = @import("Random.zig");
 const xxhash = std.hash.XxHash64.hash;
 const Utils = @import("Utils.zig");
 const Constants = @import("Constants.zig");
 const expect = std.testing.expect;
-const random = std.crypto.random;
 
 const allocator = std.heap.page_allocator;
 
@@ -24,12 +24,24 @@ pub fn create(config: Config) type {
     const HashMap = struct {
         const Self = @This();
 
+        random_warming_rate: Random.create(f64, .float),
+        random_index: Random.create(usize, .int),
+        random_temperature: Random.create(config.record.temperature.type, .int),
+
         records: [config.record.count]Record,
         buffer: [buffer_size]u8,
         now: i64,
 
-        pub fn init() Self {
+        pub fn init() !Self {
+            const random_warming_rate = try Random.create(f64, .float).init(allocator, config.record.count, {});
+            const random_index = try Random.create(usize, .int).init(allocator, config.record.count, config.record.count);
+            const random_temperature = try Random.create(config.record.temperature.type, .int).init(allocator, config.record.count, std.math.maxInt(config.record.temperature.type));
+
             return Self{
+                .random_warming_rate = random_warming_rate,
+                .random_index = random_index,
+                .random_temperature = random_temperature,
+
                 .records = [_]Record{undefined} ** config.record.count,
                 .buffer = [_]u8{0} ** buffer_size,
                 .now = std.time.timestamp(),
@@ -53,8 +65,7 @@ pub fn create(config: Config) type {
                     break :block num;
                 },
                 .max_size => record.data[0..record.key_length],
-                // TODO: precompute random values
-            }) or record.temperature < random.intRangeAtMost(config.record.temperature.type, 0, std.math.maxInt(config.record.temperature.type))) {
+            }) or record.temperature < self.random_temperature.next()) {
                 self.free(record);
 
                 // NOTE: maybe move into Record?
@@ -169,12 +180,10 @@ pub fn create(config: Config) type {
                 }
             }
 
-            // TODO: precompute random values
-            if (random.float(f64) < config.record.temperature.warming_rate) {
+            if (self.random_warming_rate.next() < config.record.temperature.warming_rate) {
                 record.temperature = if (record.temperature < std.math.maxInt(config.record.temperature.type) - 1) record.temperature + 1 else 0;
 
-                // TODO: precompute random values
-                var victim = self.records[random.intRangeAtMost(usize, 0, config.record.count)];
+                var victim = self.records[self.random_index.next()];
 
                 victim.temperature = if (victim.temperature < std.math.maxInt(config.record.temperature.type) - 1) victim.temperature + 1 else 0;
             }
@@ -283,7 +292,7 @@ test "Record" {
 
     const HashMap = create(config);
 
-    var hash_map = HashMap.init();
+    var hash_map = try HashMap.init();
 
     try expect(hash_map.get(hash, key) == null);
 
