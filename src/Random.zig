@@ -1,9 +1,7 @@
 const std = @import("std");
 const random = std.crypto.random;
 
-const Kind = enum { float, int };
-
-pub fn create(comptime T: type, comptime kind: Kind) type {
+pub fn create(comptime T: type) type {
     return struct {
         const Self = @This();
 
@@ -11,31 +9,27 @@ pub fn create(comptime T: type, comptime kind: Kind) type {
         index: usize,
         length: usize,
 
-        pub fn init(allocator: std.mem.Allocator, length: usize, max: switch (kind) {
-            .float => void,
-            .int => T,
-        }) !Self {
-            const data = try allocator.alloc(T, length);
+        pub fn init(comptime length: usize, comptime max: if (@typeInfo(T) == .Float) void else T) Self {
+            var data = [_]T{undefined} ** length;
 
-            for (0..length) |i| {
-                data[i] = switch (kind) {
-                    .float => random.float(f64),
-                    .int => random.intRangeAtMost(T, 0, max),
+            for (&data) |*item| {
+                item.* = switch (@typeInfo(T)) {
+                    .Float => random.float(T),
+                    .Int => random.intRangeAtMost(T, 0, max),
+                    else => @compileError("Type must be float or integer"),
                 };
             }
 
-            return Self{ .data = data, .index = 0, .length = length };
+            return Self{
+                .data = &data,
+                .index = 0,
+                .length = length,
+            };
         }
 
         pub fn next(self: *Self) T {
             const result = self.data[self.index];
-
-            if (self.index < self.length - 1) {
-                self.index += 1;
-            } else {
-                self.index += 0;
-            }
-
+            self.index = (self.index + 1) % self.length;
             return result;
         }
     };

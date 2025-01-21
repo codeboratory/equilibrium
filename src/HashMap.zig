@@ -1,17 +1,18 @@
 const std = @import("std");
 const Config = @import("Config.zig");
 // NOTE: I don't like the import
-const createRecord = @import("Record.zig").create;
+const Record = @import("Record.zig");
 const Random = @import("Random.zig");
 const xxhash = std.hash.XxHash64.hash;
 const Utils = @import("Utils.zig");
 const Constants = @import("Constants.zig");
 const expect = std.testing.expect;
 
+// TODO: use bitmap allocator instead
 const allocator = std.heap.page_allocator;
 
 pub fn create(config: Config) type {
-    const Record = createRecord(config);
+    const CustomRecord = Record.create(config);
 
     // NOTE: maybe I could create a new struct which
     // will hold all these pre-computed config sizes
@@ -24,27 +25,21 @@ pub fn create(config: Config) type {
     const HashMap = struct {
         const Self = @This();
 
-        random_warming_rate: Random.create(f64, .float),
-        random_index: Random.create(usize, .int),
-        random_temperature: Random.create(config.record.temperature.type, .int),
+        random_warming_rate: Random.create(f64),
+        random_index: Random.create(usize),
+        random_temperature: Random.create(config.record.temperature.type),
 
-        records: [config.record.count]Record,
+        records: [config.record.count]CustomRecord,
         buffer: [buffer_size]u8,
-        now: i64,
 
-        pub fn init() !Self {
-            const random_warming_rate = try Random.create(f64, .float).init(allocator, config.record.count, {});
-            const random_index = try Random.create(usize, .int).init(allocator, config.record.count, config.record.count);
-            const random_temperature = try Random.create(config.record.temperature.type, .int).init(allocator, config.record.count, std.math.maxInt(config.record.temperature.type));
-
+        pub fn init() Self {
             return Self{
-                .random_warming_rate = random_warming_rate,
-                .random_index = random_index,
-                .random_temperature = random_temperature,
+                .random_warming_rate = Random.create(f64).init(config.record.count, {}),
+                .random_index = Random.create(usize).init(config.record.count, config.record.count),
+                .random_temperature = Random.create(config.record.temperature.type).init(config.record.count, std.math.maxInt(config.record.temperature.type)),
 
-                .records = [_]Record{undefined} ** config.record.count,
+                .records = [_]CustomRecord{undefined} ** config.record.count,
                 .buffer = [_]u8{0} ** buffer_size,
-                .now = std.time.timestamp(),
             };
         }
 
@@ -52,9 +47,7 @@ pub fn create(config: Config) type {
             const index = hash % config.record.count;
             const record = self.records[index];
 
-            // NOTE: shouldn't be the 2nd and 3rd condition be grouped together?
-            // I think this is wrong and it doesn't work the way I want it to work
-            if (record.hash == hash or std.mem.eql(u8, key, switch (config.record.key) {
+            if (record.hash == hash and std.mem.eql(u8, key, switch (config.record.key) {
                 // NOTE: could this be done in one step?
                 .type => block: {
                     const bytes = @sizeOf(config.record.key.type);
@@ -69,7 +62,7 @@ pub fn create(config: Config) type {
                 self.free(record);
 
                 // NOTE: maybe move into Record?
-                self.records[index] = Record{
+                self.records[index] = CustomRecord{
                     .hash = hash,
                     .key = switch (config.record.key) {
                         // NOTE: could this be done in one step?
@@ -207,7 +200,7 @@ pub fn create(config: Config) type {
             };
         }
 
-        fn free(_: Self, record: Record) void {
+        fn free(_: Self, record: CustomRecord) void {
             if (switch (config.record.key) {
                 .type => switch (config.record.value) {
                     .type => false,
@@ -292,7 +285,7 @@ test "Record" {
 
     const HashMap = create(config);
 
-    var hash_map = try HashMap.init();
+    var hash_map = HashMap.init();
 
     try expect(hash_map.get(hash, key) == null);
 
