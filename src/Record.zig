@@ -129,22 +129,6 @@ fn create_temperature_field(comptime config: Config) StructField {
     };
 }
 
-fn create_ttl_field(comptime config: Config) StructField {
-    return if (config.record.ttl) |t| .{
-        .name = "ttl",
-        .type = t.type,
-        .default_value = null,
-        .is_comptime = false,
-        .alignment = if (config.record.layout == .small) 0 else @alignOf(t.type),
-    } else .{
-        .name = "ttl",
-        .type = void,
-        .default_value = Constants.constant_void,
-        .is_comptime = false,
-        .alignment = 0,
-    };
-}
-
 fn create_data_field(comptime config: Config) StructField {
     return if (config.allocator != null and (config.record.key == .max_size or config.record.value == .max_size)) .{
         .name = "data",
@@ -243,7 +227,6 @@ pub fn create(comptime config: Config) type {
         create_value_field(config),
         create_value_length_field(config),
         create_total_length_field(config),
-        create_ttl_field(config),
         create_temperature_field(config),
         create_data_field(config),
     };

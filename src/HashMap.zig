@@ -1,11 +1,11 @@
 const std = @import("std");
 const Config = @import("Config.zig");
-// NOTE: I don't like the import
 const Record = @import("Record.zig");
 const Random = @import("Random.zig");
-const xxhash = std.hash.XxHash64.hash;
 const Utils = @import("Utils.zig");
 const Constants = @import("Constants.zig");
+
+const xxhash = std.hash.XxHash64.hash;
 const expect = std.testing.expect;
 
 // TODO: use bitmap allocator instead
@@ -14,9 +14,6 @@ const allocator = std.heap.page_allocator;
 pub fn create(config: Config) type {
     const CustomRecord = Record.create(config);
 
-    // NOTE: maybe I could create a new struct which
-    // will hold all these pre-computed config sizes
-    const ttl_type = if (config.record.ttl) |t| t.type else void;
     const buffer_size = switch (config.record.value) {
         .type => |size| @sizeOf(size),
         .max_size => 0,
@@ -43,7 +40,7 @@ pub fn create(config: Config) type {
             };
         }
 
-        pub fn put(self: *Self, hash: config.record.hash.type, key: []u8, value: []u8, ttl: ttl_type) !void {
+        pub fn put(self: *Self, hash: config.record.hash.type, key: []u8, value: []u8) !void {
             const index = hash % config.record.count;
             const record = self.records[index];
 
@@ -106,7 +103,6 @@ pub fn create(config: Config) type {
                         },
                     },
                     .temperature = std.math.maxInt(config.record.temperature.type) / 2,
-                    .ttl = if (config.record.ttl == null) {} else ttl,
                     .data = block: {
                         if (config.record.key == .type and config.record.value == .type) {
                             break :block undefined;
@@ -158,19 +154,6 @@ pub fn create(config: Config) type {
                 .max_size => record.data[0..record.key_length],
             }) == false) {
                 return null;
-            }
-
-            if (config.record.ttl) |ttl| {
-                if (std.time.timestamp() >= self.now + @as(i64, @intCast(switch (ttl.resolution) {
-                    .s => record.ttl,
-                    .m => record.tll * 60,
-                    .h => record.ttl * 3600,
-                    .d => record.ttl * 86400,
-                }))) {
-                    // TODO: do not do duplicate work
-                    self.delete(hash, key);
-                    return null;
-                }
             }
 
             if (self.random_warming_rate.next() < config.record.temperature.warming_rate) {
@@ -268,11 +251,6 @@ test "Record" {
                 .type = u8,
                 .warming_rate = 0.05,
             },
-            .ttl = null,
-            // .ttl = .{
-            //     .type = u25,
-            //     .resolution = .s,
-            // },
         },
         .allocator = .{
             .chunk_size = 32 * 1024, // 32 Kb
@@ -289,26 +267,13 @@ test "Record" {
 
     try expect(hash_map.get(hash, key) == null);
 
-    try hash_map.put(hash, key, value, {});
-    // try hash_map.put(hash, key, value, 2);
+    try hash_map.put(hash, key, value);
 
     if (hash_map.get(hash, key)) |slice| {
         try expect(std.mem.eql(u8, slice, value));
     } else {
         try expect(false);
     }
-
-    // std.time.sleep(std.time.ns_per_s * 3);
-
-    // try expect(hash_map.get(hash, key) == null);
-
-    // try hash_map.put(hash, key, value, 5);
-
-    // if (hash_map.get(hash, key)) |slice| {
-    //     try expect(std.mem.eql(u8, slice, value));
-    // } else {
-    //     try expect(false);
-    // }
 
     hash_map.delete(hash, key);
 

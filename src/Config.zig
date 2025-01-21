@@ -12,19 +12,6 @@ const Temperature = struct {
     warming_rate: f64,
 };
 
-const Ttl = struct {
-    type: type,
-    resolution: enum {
-        milisecond,
-        second,
-        minute,
-        hour,
-        day,
-        month,
-        year,
-    },
-};
-
 const Layout = enum {
     fast,
     small,
@@ -46,7 +33,6 @@ const Record = struct {
     key: Size,
     value: Size,
     temperature: Temperature,
-    ttl: ?Ttl,
 };
 
 record: Record,
