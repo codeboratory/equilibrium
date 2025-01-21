@@ -40,38 +40,50 @@ pub fn create(config: Config) type {
             };
         }
 
-        pub fn put(self: *Self, hash: config.record.hash.type, key: []u8, value: []u8) !void {
-            const index = hash % config.record.count;
+        inline fn get_index(hash: config.record.hash.type) usize {
+            const is_power_of_two = (config.record.count & (config.record.count - 1)) == 0;
+
+            if (is_power_of_two) {
+                return hash & (config.record.count - 1);
+            } else {
+                return hash % (config.record.count - 1);
+            }
+        }
+
+        pub fn peek(self: Self, hash: config.record.hash.type) CustomRecord {
+            const index = get_index(hash);
             const record = self.records[index];
 
-            if (record.hash == hash and std.mem.eql(u8, key, switch (config.record.key) {
-                // NOTE: could this be done in one step?
-                .type => block: {
-                    const bytes = @sizeOf(config.record.key.type);
-                    // NOTE: will this work the same on big endian
-                    const size = bytes - (@clz(record.key) / 8);
-                    const num: []u8 = @constCast(&@as([bytes]u8, @bitCast(record.key)))[0..size];
+            return record;
+        }
 
-                    break :block num;
-                },
+        pub fn put(self: *Self, hash: config.record.hash.type, key: []u8, value: []u8) !void {
+            if (config.record.key == .type) {
+                if (key.len != @sizeOf(config.record.key.type)) {
+                    @panic("Key has wrong byte length");
+                }
+            }
+
+            if (config.record.value == .type) {
+                if (value.len != @sizeOf(config.record.value.type)) {
+                    @panic("Value has wrong byte length");
+                }
+            }
+
+            const index = get_index(hash);
+            const record = self.records[index];
+            const hash_equals = record.hash == hash;
+            const key_equals = std.mem.eql(u8, key, switch (config.record.key) {
+                .type => std.mem.asBytes(&record.key),
                 .max_size => record.data[0..record.key_length],
-            }) or record.temperature < self.random_temperature.next()) {
-                self.free(record);
+            });
 
-                // NOTE: maybe move into Record?
+            if (hash_equals and key_equals or record.temperature < self.random_temperature.next()) {
+                self.free(record);
                 self.records[index] = CustomRecord{
                     .hash = hash,
                     .key = switch (config.record.key) {
-                        // NOTE: could this be done in one step?
-                        .type => block: {
-                            const bytes = @sizeOf(config.record.key.type);
-                            var tmp_array: [bytes]u8 = undefined;
-
-                            @memset(tmp_array[0..], 0);
-                            @memcpy(tmp_array[0..key.len], key);
-
-                            break :block std.mem.readInt(config.record.key.type, &tmp_array, Constants.native_endian);
-                        },
+                        .type => std.mem.bytesToValue(config.record.key.type, key),
                         .max_size => {},
                     },
                     .key_length = switch (config.record.key) {
@@ -79,16 +91,7 @@ pub fn create(config: Config) type {
                         .max_size => @intCast(key.len),
                     },
                     .value = switch (config.record.value) {
-                        // NOTE: could this be done in one step?
-                        .type => block: {
-                            const bytes = @sizeOf(config.record.value.type);
-                            var tmp_array: [bytes]u8 = undefined;
-
-                            @memset(tmp_array[0..], 0);
-                            @memcpy(tmp_array[0..value.len], value);
-
-                            break :block std.mem.readInt(config.record.value.type, &tmp_array, Constants.native_endian);
-                        },
+                        .type => std.mem.bytesToValue(config.record.value.type, value),
                         .max_size => {},
                     },
                     .value_length = switch (config.record.value) {
@@ -99,6 +102,7 @@ pub fn create(config: Config) type {
                         .type => {},
                         .max_size => |k| switch (config.record.value) {
                             .type => {},
+                            // TODO: extract into utils
                             .max_size => |v| @as(std.meta.Int(.unsigned, Utils.bits_needed(k + v)), @intCast(key.len + value.len)),
                         },
                     },
@@ -106,57 +110,54 @@ pub fn create(config: Config) type {
                     .data = block: {
                         if (config.record.key == .type and config.record.value == .type) {
                             break :block undefined;
-                        } else {
-                            const key_length = switch (config.record.key) {
-                                .type => 0,
-                                .max_size => key.len,
-                            };
-
-                            const value_length = switch (config.record.value) {
-                                .type => 0,
-                                .max_size => value.len,
-                            };
-
-                            const data = try allocator.alloc(u8, key_length + value_length);
-
-                            if (config.record.key == .max_size and config.record.value == .type) {
-                                @memcpy(data, key);
-                            }
-
-                            if (config.record.key == .type and config.record.value == .max_size) {
-                                @memcpy(data, value);
-                            }
-
-                            if (config.record.key == .max_size and config.record.value == .max_size) {
-                                @memcpy(data[0..key.len], key);
-                                @memcpy(data[key.len .. key.len + value.len], value);
-                            }
-
-                            break :block data.ptr;
                         }
+
+                        const key_length = switch (config.record.key) {
+                            .type => 0,
+                            .max_size => key.len,
+                        };
+
+                        const value_length = switch (config.record.value) {
+                            .type => 0,
+                            .max_size => value.len,
+                        };
+
+                        // TODO: use bitmap allocator instead
+                        const data = try allocator.alloc(u8, key_length + value_length);
+
+                        if (config.record.key == .max_size and config.record.value == .type) {
+                            @memcpy(data, key);
+                        }
+
+                        if (config.record.key == .type and config.record.value == .max_size) {
+                            @memcpy(data, value);
+                        }
+
+                        if (config.record.key == .max_size and config.record.value == .max_size) {
+                            @memcpy(data[0..key.len], key);
+                            @memcpy(data[key.len .. key.len + value.len], value);
+                        }
+
+                        break :block data.ptr;
                     },
                 };
             }
         }
 
         pub fn get(self: *Self, hash: config.record.hash.type, key: []u8) ?[]u8 {
-            var record = self.records[hash % config.record.count];
+            const index = get_index(hash);
+            var record = self.records[index];
 
             if (record.hash == 0 or record.hash != hash or std.mem.eql(u8, key, switch (config.record.key) {
-                // NOTE: ugh I don't like this
-                .type => block: {
-                    const bytes = @sizeOf(config.record.key.type);
-                    const size = bytes - (@clz(record.key) / 8);
-                    const num: []u8 = @constCast(&@as([bytes]u8, @bitCast(record.key)))[0..size];
-
-                    break :block num;
-                },
+                .type => std.mem.asBytes(&record.key),
                 .max_size => record.data[0..record.key_length],
             }) == false) {
                 return null;
             }
 
-            if (self.random_warming_rate.next() < config.record.temperature.warming_rate) {
+            const should_warm_up = self.random_warming_rate.next() < config.record.temperature.warming_rate;
+
+            if (should_warm_up) {
                 record.temperature = if (record.temperature < std.math.maxInt(config.record.temperature.type) - 1) record.temperature + 1 else 0;
 
                 var victim = self.records[self.random_index.next()];
@@ -165,17 +166,7 @@ pub fn create(config: Config) type {
             }
 
             return switch (config.record.value) {
-                // NOTE: ugh I don't like this
-                .type => block: {
-                    const bytes = @sizeOf(config.record.value.type);
-                    const size = bytes - (@clz(record.value) / 8);
-                    const num: []u8 = @constCast(&@as([bytes]u8, @bitCast(record.value)))[0..size];
-
-                    @memset(self.buffer[0..], 0);
-                    @memcpy(self.buffer[0..type], num);
-
-                    break :block self.buffer[0..type];
-                },
+                .type => std.mem.asBytes(&record.value),
                 .max_size => switch (config.record.key) {
                     .type => record.data[0..record.value_length],
                     .max_size => record.data[record.key_length .. record.key_length + record.value_length],
@@ -208,22 +199,17 @@ pub fn create(config: Config) type {
         }
 
         pub fn delete(self: *Self, hash: config.record.hash.type, key: []u8) void {
-            const record = self.records[hash % config.record.count];
-
-            if (record.hash == hash and std.mem.eql(u8, key, switch (config.record.key) {
-                // NOTE: ugh I don't like this
-                .type => block: {
-                    const bytes = @sizeOf(config.record.key.type);
-                    const size = bytes - (@clz(record.key) / 8);
-                    const num: []u8 = @constCast(&@as([bytes]u8, @bitCast(record.key)))[0..size];
-
-                    break :block num;
-                },
+            const index = get_index(hash);
+            const record = self.records[index];
+            const hash_equals = record.hash == hash;
+            const key_equals = std.mem.eql(u8, key, switch (config.record.key) {
+                .type => std.mem.asBytes(&record.key),
                 .max_size => record.data[0..record.key_length],
-            })) {
-                self.free(record);
+            });
 
-                self.records[hash % config.record.count] = undefined;
+            if (hash_equals and key_equals) {
+                self.free(record);
+                self.records[get_index(hash)] = undefined;
             }
         }
     };
@@ -244,7 +230,7 @@ test "Record" {
                 // .max_size = 1024,
             },
             .value = .{
-                // .type = u256,
+                // .type = u32,
                 .max_size = 64 * 1024 * 1024, // 64 Mb
             },
             .temperature = .{
@@ -259,7 +245,7 @@ test "Record" {
 
     const hash = xxhash(0, "hashhash");
     const key: []u8 = @constCast("hashhash")[0..];
-    const value: []u8 = @constCast("Hello, World!")[0..];
+    const value: []u8 = @constCast("test")[0..];
 
     const HashMap = create(config);
 
