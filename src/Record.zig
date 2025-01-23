@@ -145,6 +145,22 @@ fn create_data_field(comptime config: Config) StructField {
     };
 }
 
+fn create_ttl_field(comptime config: Config) StructField {
+    return if (config.record.ttl) |ttl| .{
+        .name = "ttl",
+        .type = ttl.get_type(),
+        .default_value = null,
+        .is_comptime = false,
+        .alignment = 0,
+    } else .{
+        .name = "ttl",
+        .type = void,
+        .default_value = Constants.constant_void,
+        .is_comptime = false,
+        .alignment = 0,
+    };
+}
+
 fn create_padding_field(comptime struct_size_aligned: usize, comptime struct_size_raw: usize) StructField {
     const padding_size = struct_size_aligned - struct_size_raw;
 
@@ -229,6 +245,7 @@ pub fn create(comptime config: Config) type {
         create_total_length_field(config),
         create_temperature_field(config),
         create_data_field(config),
+        create_ttl_field(config),
     };
 
     return switch (config.record.layout) {

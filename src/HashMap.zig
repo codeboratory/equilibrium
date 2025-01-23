@@ -14,6 +14,8 @@ const allocator = std.heap.page_allocator;
 pub fn create(config: Config) type {
     const CustomRecord = Record.create(config);
 
+    const ttl_type = if (config.record.ttl) |t| t.get_type() else void;
+
     const HashMap = struct {
         const Self = @This();
 
@@ -24,6 +26,8 @@ pub fn create(config: Config) type {
         records: [config.record.count]CustomRecord,
 
         pub fn init() Self {
+            std.debug.print("ttl_type: {any}\n", .{@bitSizeOf(ttl_type)});
+
             return Self{
                 .random_warming_rate = Random.create(f64).init(config.record.count, {}),
                 .random_index = Random.create(usize).init(config.record.count, config.record.count),
@@ -33,7 +37,7 @@ pub fn create(config: Config) type {
             };
         }
 
-        pub fn put(self: *Self, hash: config.record.hash.type, key: []u8, value: []u8) !void {
+        pub fn put(self: *Self, hash: config.record.hash.type, key: []u8, value: []u8, ttl: ttl_type) !void {
             switch (config.record.key) {
                 .type => |T| if (key.len != @sizeOf(T)) return error.InvalidKeyLength,
                 .max_size => |max| if (key.len > max) return error.InvalidKeyLength,
@@ -51,7 +55,7 @@ pub fn create(config: Config) type {
 
             if (hash_equals and key_equals or self.should_overwrite(record)) {
                 free(record);
-                self.records[index] = try create_record(hash, key, value);
+                self.records[index] = try create_record(hash, key, value, ttl);
             }
         }
 
@@ -63,7 +67,17 @@ pub fn create(config: Config) type {
                 return null;
             }
 
-            // TODO: check TTL
+            if (config.record.ttl) |t| {
+                const now = std.time.milliTimestamp();
+                const ttl = record.ttl * t.get_multiplier();
+
+                if (now > ttl) {
+                    free(record);
+                    self.records[index] = undefined;
+
+                    return null;
+                }
+            }
 
             if (self.should_warm_up()) {
                 increase_temperature(&record);
@@ -167,7 +181,14 @@ pub fn create(config: Config) type {
             return record.temperature < self.random_temperature.next();
         }
 
-        inline fn create_record(hash: config.record.hash.type, key: []u8, value: []u8) !CustomRecord {
+        inline fn to_ttl(ttl: Config.Ttl, value: ttl_type) ttl_type {
+            const now = @as(u64, @intCast(std.time.milliTimestamp()));
+            const multiplier = ttl.get_multiplier();
+
+            return @as(ttl.get_type(), @intCast((now + (multiplier * value)) / multiplier));
+        }
+
+        inline fn create_record(hash: config.record.hash.type, key: []u8, value: []u8, ttl: ttl_type) !CustomRecord {
             return CustomRecord{
                 .hash = hash,
                 .key = switch (config.record.key) {
@@ -227,6 +248,10 @@ pub fn create(config: Config) type {
 
                     break :block data.ptr;
                 },
+                .ttl = if (config.record.ttl) |t|
+                    to_ttl(t, ttl)
+                else
+                    undefined,
             };
         }
     };
@@ -254,6 +279,9 @@ test "Record" {
                 .type = u8,
                 .warming_rate = 0.05,
             },
+            .ttl = .{
+                .resolution = .day,
+            },
         },
         .allocator = .{
             .chunk_size = 32 * 1024, // 32 Kb
@@ -263,6 +291,7 @@ test "Record" {
     const hash = xxhash(0, "hashhash");
     const key: []u8 = @constCast("hashhash")[0..];
     const value: []u8 = @constCast("test")[0..];
+    const ttl = 1;
 
     const HashMap = create(config);
 
@@ -270,7 +299,7 @@ test "Record" {
 
     try expect(hash_map.get(hash, key) == null);
 
-    try hash_map.put(hash, key, value);
+    try hash_map.put(hash, key, value, ttl);
 
     if (hash_map.get(hash, key)) |slice| {
         try expect(std.mem.eql(u8, slice, value));
@@ -279,6 +308,12 @@ test "Record" {
     }
 
     hash_map.delete(hash, key);
+
+    try expect(hash_map.get(hash, key) == null);
+
+    try hash_map.put(hash, key, value, ttl);
+
+    std.time.sleep(10 * 1000000);
 
     try expect(hash_map.get(hash, key) == null);
 }
