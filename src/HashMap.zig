@@ -67,7 +67,10 @@ pub fn create(config: Config) type {
 
             if (self.should_warm_up()) {
                 increase_temperature(&record);
-                decrease_temperature(&self.records[self.random_index.next()]);
+
+                var victim = self.get_victim();
+
+                decrease_temperature(&victim);
             }
 
             return get_value(record);
@@ -83,6 +86,10 @@ pub fn create(config: Config) type {
                 free(record);
                 self.records[index] = undefined;
             }
+        }
+
+        inline fn get_victim(self: *Self) CustomRecord {
+            return self.records[self.random_index.next()];
         }
 
         inline fn get_key(record: CustomRecord) []u8 {
