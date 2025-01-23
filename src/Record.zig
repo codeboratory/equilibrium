@@ -45,10 +45,10 @@ fn create_key_length_field(comptime config: Config) StructField {
         },
         .max_size => |k| .{
             .name = "key_length",
-            .type = std.meta.Int(.unsigned, Utils.bits_needed(k)),
+            .type = Utils.create_uint(k),
             .default_value = null,
             .is_comptime = false,
-            .alignment = if (config.record.layout == .small) 0 else @alignOf(std.meta.Int(.unsigned, Utils.bits_needed(k))),
+            .alignment = if (config.record.layout == .small) 0 else @alignOf(Utils.create_uint(k)),
         },
     };
 }
@@ -83,10 +83,10 @@ fn create_value_length_field(comptime config: Config) StructField {
         },
         .max_size => |v| .{
             .name = "value_length",
-            .type = std.meta.Int(.unsigned, Utils.bits_needed(v)),
+            .type = Utils.create_uint(v),
             .default_value = null,
             .is_comptime = false,
-            .alignment = if (config.record.layout == .small) 0 else @alignOf(std.meta.Int(.unsigned, Utils.bits_needed(v))),
+            .alignment = if (config.record.layout == .small) 0 else @alignOf(Utils.create_uint(v)),
         },
     };
 }
@@ -110,10 +110,10 @@ fn create_total_length_field(comptime config: Config) StructField {
             },
             .max_size => |v| .{
                 .name = "total_length",
-                .type = std.meta.Int(.unsigned, Utils.bits_needed(k + v)),
+                .type = Utils.create_uint(k + v),
                 .default_value = null,
                 .is_comptime = false,
-                .alignment = if (config.record.layout == .small) 0 else @alignOf(std.meta.Int(.unsigned, Utils.bits_needed(k + v))),
+                .alignment = if (config.record.layout == .small) 0 else @alignOf(Utils.create_uint(k + v)),
             },
         },
     };
@@ -150,8 +150,8 @@ fn create_padding_field(comptime struct_size_aligned: usize, comptime struct_siz
 
     return .{
         .name = "padding",
-        .type = std.meta.Int(.unsigned, padding_size),
-        .default_value = @as(?*const anyopaque, @ptrCast(&@as(std.meta.Int(.unsigned, padding_size), 0))),
+        .type = Utils.create_uint(padding_size),
+        .default_value = @as(?*const anyopaque, @ptrCast(&@as(Utils.create_uint(padding_size), 0))),
         .is_comptime = false,
         .alignment = 0,
     };
@@ -203,7 +203,7 @@ fn create_small_struct(comptime fields: anytype) type {
     return @Type(.{
         .Struct = .{
             .layout = .@"packed",
-            .backing_integer = std.meta.Int(.unsigned, struct_size_aligned),
+            .backing_integer = Utils.create_uint(struct_size_aligned),
             .fields = &padded_fields,
             .decls = &.{},
             .is_tuple = false,
