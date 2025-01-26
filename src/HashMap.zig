@@ -14,10 +14,16 @@ const allocator = std.heap.page_allocator;
 pub fn create(config: Config) type {
     const CustomRecord = Record.create(config);
 
-    const ttl_type = if (config.record.ttl) |t| t.get_type() else void;
+    const ttl_type = if (config.record.ttl) |ttl| Utils.create_uint(ttl.max_size) else void;
 
     const HashMap = struct {
         const Self = @This();
+
+        // TODO: move into a struct
+        value_max: usize,
+        timestamp_multiplier: usize,
+        timestamp_ref: u64,
+        timestamp_max: u64,
 
         random_warming_rate: Random.create(f64),
         random_index: Random.create(usize),
@@ -26,9 +32,17 @@ pub fn create(config: Config) type {
         records: [config.record.count]CustomRecord,
 
         pub fn init() Self {
-            std.debug.print("ttl_type: {any}\n", .{@bitSizeOf(ttl_type)});
+            const value_max = if (config.record.ttl) |ttl| ttl.max_size else 0;
+            const timestamp_multiplier = if (config.record.ttl) |ttl| @intFromEnum(ttl.resolution) else 1;
+            const timestamp_ref = @as(u64, @intCast(std.time.milliTimestamp())) / timestamp_multiplier;
+            const timestamp_max = (timestamp_ref * timestamp_multiplier) + (value_max * timestamp_multiplier);
 
             return Self{
+                .value_max = value_max,
+                .timestamp_multiplier = timestamp_multiplier,
+                .timestamp_ref = timestamp_ref,
+                .timestamp_max = timestamp_max,
+
                 .random_warming_rate = Random.create(f64).init(config.record.count, {}),
                 .random_index = Random.create(usize).init(config.record.count, config.record.count),
                 .random_temperature = Random.create(config.record.temperature.type).init(config.record.count, std.math.maxInt(config.record.temperature.type)),
@@ -55,11 +69,11 @@ pub fn create(config: Config) type {
 
             if (hash_equals and key_equals or self.should_overwrite(record)) {
                 free(record);
-                self.records[index] = try create_record(hash, key, value, ttl);
+                self.records[index] = try self.create_record(hash, key, value, ttl);
             }
         }
 
-        pub fn get(self: *Self, hash: config.record.hash.type, key: []u8) ?[]u8 {
+        pub fn get(self: *Self, hash: config.record.hash.type, key: []u8) !?[]u8 {
             const index = get_index(hash);
             var record = self.records[index];
 
@@ -67,11 +81,11 @@ pub fn create(config: Config) type {
                 return null;
             }
 
-            if (config.record.ttl) |t| {
+            if (config.record.ttl) |_| {
                 const now = std.time.milliTimestamp();
-                const ttl = record.ttl * t.get_multiplier();
+                const decoded_ttl = try self.decode_ttl(record.ttl);
 
-                if (now > ttl) {
+                if (now > decoded_ttl) {
                     free(record);
                     self.records[index] = undefined;
 
@@ -181,14 +195,27 @@ pub fn create(config: Config) type {
             return record.temperature < self.random_temperature.next();
         }
 
-        inline fn to_ttl(ttl: Config.Ttl, value: ttl_type) ttl_type {
-            const now = @as(u64, @intCast(std.time.milliTimestamp()));
-            const multiplier = ttl.get_multiplier();
+        inline fn encode_ttl(self: Self, value: u64) !ttl_type {
+            if (value > self.timestamp_max) {
+                return error.TimestampOutOfRange;
+            }
 
-            return @as(ttl.get_type(), @intCast((now + (multiplier * value)) / multiplier));
+            return @intCast((value / self.timestamp_multiplier) - self.timestamp_ref);
         }
 
-        inline fn create_record(hash: config.record.hash.type, key: []u8, value: []u8, ttl: ttl_type) !CustomRecord {
+        inline fn decode_ttl(self: Self, value: ttl_type) !u64 {
+            if (value > self.value_max) {
+                return error.TimestampOutOfRange;
+            }
+
+            return (self.timestamp_ref + @as(u64, value)) * self.timestamp_multiplier;
+        }
+
+        inline fn get_now_with_ttl(self: Self, ttl: ttl_type) u64 {
+            return @as(u64, @intCast(std.time.milliTimestamp())) + (ttl * self.timestamp_multiplier);
+        }
+
+        inline fn create_record(self: Self, hash: config.record.hash.type, key: []u8, value: []u8, ttl: ttl_type) !CustomRecord {
             return CustomRecord{
                 .hash = hash,
                 .key = switch (config.record.key) {
@@ -248,8 +275,8 @@ pub fn create(config: Config) type {
 
                     break :block data.ptr;
                 },
-                .ttl = if (config.record.ttl) |t|
-                    to_ttl(t, ttl)
+                .ttl = if (config.record.ttl) |_|
+                    try self.encode_ttl(self.get_now_with_ttl(ttl))
                 else
                     undefined,
             };
@@ -280,7 +307,8 @@ test "Record" {
                 .warming_rate = 0.05,
             },
             .ttl = .{
-                .resolution = .day,
+                .max_size = 4294967296,
+                .resolution = .second,
             },
         },
         .allocator = .{
@@ -297,11 +325,11 @@ test "Record" {
 
     var hash_map = HashMap.init();
 
-    try expect(hash_map.get(hash, key) == null);
+    try expect(try hash_map.get(hash, key) == null);
 
     try hash_map.put(hash, key, value, ttl);
 
-    if (hash_map.get(hash, key)) |slice| {
+    if (try hash_map.get(hash, key)) |slice| {
         try expect(std.mem.eql(u8, slice, value));
     } else {
         try expect(false);
@@ -309,11 +337,11 @@ test "Record" {
 
     hash_map.delete(hash, key);
 
-    try expect(hash_map.get(hash, key) == null);
+    try expect(try hash_map.get(hash, key) == null);
 
     try hash_map.put(hash, key, value, ttl);
 
-    std.time.sleep(10 * 1000000);
+    std.time.sleep(2 * 1000000);
 
-    try expect(hash_map.get(hash, key) == null);
+    try expect(try hash_map.get(hash, key) == null);
 }

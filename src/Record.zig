@@ -148,7 +148,7 @@ fn create_data_field(comptime config: Config) StructField {
 fn create_ttl_field(comptime config: Config) StructField {
     return if (config.record.ttl) |ttl| .{
         .name = "ttl",
-        .type = ttl.get_type(),
+        .type = Utils.create_uint(ttl.max_size),
         .default_value = null,
         .is_comptime = false,
         .alignment = 0,

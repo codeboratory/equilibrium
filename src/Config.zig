@@ -16,30 +16,15 @@ pub const Temperature = struct {
 };
 
 pub const Ttl = struct {
-    // max_size: usize,
-    resolution: enum {
-        milisecond,
-        second,
-        minute,
-        hour,
-        day,
-        month,
+    max_size: usize,
+    resolution: enum(u64) {
+        milisecond = 1,
+        second = 1000,
+        minute = 60 * 1000,
+        hour = 60 * 60 * 1000,
+        day = 24 * 60 * 60 * 1000,
+        month = 30 * 24 * 60 * 60 * 1000,
     },
-
-    pub fn get_type(self: Ttl) type {
-        return Utils.create_uint(std.math.maxInt(u64) / self.get_multiplier());
-    }
-
-    pub fn get_multiplier(self: Ttl) usize {
-        return switch (self.resolution) {
-            .milisecond => 1,
-            .second => 1000,
-            .minute => 60 * 1000,
-            .hour => 60 * 60 * 1000,
-            .day => 24 * 60 * 60 * 1000,
-            .month => 30 * 24 * 60 * 60 * 1000,
-        };
-    }
 };
 
 pub const Layout = enum {
