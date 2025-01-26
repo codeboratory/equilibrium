@@ -11,6 +11,9 @@ const expect = std.testing.expect;
 // TODO: use bitmap allocator instead
 const allocator = std.heap.page_allocator;
 
+// NOTE: can I somehow split this up
+// into smaller chunks to make it
+// more readable?
 pub fn create(config: Config) type {
     const CustomRecord = Record.create(config);
 
@@ -25,10 +28,14 @@ pub fn create(config: Config) type {
         timestamp_ref: u64,
         timestamp_max: u64,
 
-        random_warming_rate: Random.create(f64),
         random_index: Random.create(usize),
+
+        // NOTE: maybe move into Record
+        random_warming_rate: Random.create(f64),
         random_temperature: Random.create(config.record.temperature.type),
 
+        // NOTE: maybe use page allocator instead
+        // so this could be provided in a JSON config
         records: [config.record.count]CustomRecord,
 
         pub fn init() Self {
@@ -52,11 +59,13 @@ pub fn create(config: Config) type {
         }
 
         pub fn put(self: *Self, hash: config.record.hash.type, key: []u8, value: []u8, ttl: ttl_type) !void {
+            // TODO: extract errors
             switch (config.record.key) {
                 .type => |T| if (key.len != @sizeOf(T)) return error.InvalidKeyLength,
                 .max_size => |max| if (key.len > max) return error.InvalidKeyLength,
             }
 
+            // TODO: extract errors
             switch (config.record.value) {
                 .type => |T| if (value.len != @sizeOf(T)) return error.InvalidValueLength,
                 .max_size => |max| if (value.len > max) return error.InvalidValueLength,
@@ -82,6 +91,9 @@ pub fn create(config: Config) type {
             }
 
             if (config.record.ttl) |_| {
+                // NOTE: what if now > timestamp_max?
+                // TODO: compare if it's faster
+                // to encode now or decode ttl
                 const now = std.time.milliTimestamp();
                 const decoded_ttl = try self.decode_ttl(record.ttl);
 
@@ -120,6 +132,7 @@ pub fn create(config: Config) type {
             return self.records[self.random_index.next()];
         }
 
+        // NOTE: maybe move to Record
         inline fn get_key(record: CustomRecord) []u8 {
             return switch (config.record.key) {
                 .type => std.mem.asBytes(@constCast(&record.key))[0..],
@@ -127,6 +140,7 @@ pub fn create(config: Config) type {
             };
         }
 
+        // NOTE: maybe move to Record
         inline fn get_value(record: CustomRecord) []u8 {
             return switch (config.record.value) {
                 .type => std.mem.asBytes(&record.value),
@@ -137,18 +151,22 @@ pub fn create(config: Config) type {
             };
         }
 
+        // NOTE: maybe move to Record
         inline fn should_warm_up(self: *Self) bool {
             return self.random_warming_rate.next() < config.record.temperature.warming_rate;
         }
 
+        // NOTE: maybe move to Record
         inline fn increase_temperature(record: *CustomRecord) void {
             record.temperature = Utils.saturating_add(config.record.temperature.type, record.temperature, 1);
         }
 
+        // NOTE: maybe move to Record
         inline fn decrease_temperature(record: *CustomRecord) void {
             record.temperature = Utils.saturating_sub(config.record.temperature.type, record.temperature, 1);
         }
 
+        // NOTE: maybe move to Record
         inline fn get_total_length(record: CustomRecord) usize {
             return switch (config.record.key) {
                 .type => switch (config.record.value) {
@@ -162,6 +180,7 @@ pub fn create(config: Config) type {
             };
         }
 
+        // NOTE: maybe move to Record
         inline fn can_data_be_freed(record: CustomRecord) bool {
             return switch (config.record.key) {
                 .type => switch (config.record.value) {
@@ -175,12 +194,14 @@ pub fn create(config: Config) type {
             };
         }
 
+        // NOTE: maybe move to Record
         inline fn free(record: CustomRecord) void {
             if (can_data_be_freed(record)) {
                 allocator.free(record.data[0..get_total_length(record)]);
             }
         }
 
+        // NOTE: maybe move to Utils
         inline fn get_index(hash: config.record.hash.type) usize {
             const is_power_of_two = (config.record.count & (config.record.count - 1)) == 0;
 
@@ -191,30 +212,37 @@ pub fn create(config: Config) type {
             }
         }
 
+        // NOTE: maybe move to Record
         inline fn should_overwrite(self: *Self, record: CustomRecord) bool {
             return record.temperature < self.random_temperature.next();
         }
 
+        // NOTE: maybe move to TTL
         inline fn encode_ttl(self: Self, value: u64) !ttl_type {
             if (value > self.timestamp_max) {
+                // TODO: extract errors
                 return error.TimestampOutOfRange;
             }
 
             return @intCast((value / self.timestamp_multiplier) - self.timestamp_ref);
         }
 
+        // NOTE: maybe move to TTL
         inline fn decode_ttl(self: Self, value: ttl_type) !u64 {
             if (value > self.value_max) {
+                // TODO: extract errors
                 return error.TimestampOutOfRange;
             }
 
             return (self.timestamp_ref + @as(u64, value)) * self.timestamp_multiplier;
         }
 
+        // NOTE: maybe move to TTL
         inline fn get_now_with_ttl(self: Self, ttl: ttl_type) u64 {
             return @as(u64, @intCast(std.time.milliTimestamp())) + (ttl * self.timestamp_multiplier);
         }
 
+        // NOTE: maybe move to Record
         inline fn create_record(self: Self, hash: config.record.hash.type, key: []u8, value: []u8, ttl: ttl_type) !CustomRecord {
             return CustomRecord{
                 .hash = hash,
@@ -306,8 +334,13 @@ test "Record" {
                 .type = u8,
                 .warming_rate = 0.05,
             },
+            // NOTE: maybe ttl could also be .small/.fast
             .ttl = .{
+                // ~136 years
                 .max_size = 4294967296,
+                // NOTE: maybe I could cap the TTL size
+                // and make it different from the absolute
+                // size which is max_size
                 .resolution = .second,
             },
         },
