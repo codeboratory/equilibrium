@@ -9,9 +9,6 @@ const ttl_create = @import("Ttl.zig").create;
 const xxhash = std.hash.XxHash64.hash;
 const expect = std.testing.expect;
 
-// TODO: use bitmap allocator instead
-const allocator = std.heap.page_allocator;
-
 pub fn create(config: Config) type {
     const Record = record_create(config);
     const Ttl = ttl_create(config);
@@ -24,6 +21,8 @@ pub fn create(config: Config) type {
     const HashMap = struct {
         const Self = @This();
 
+        allocator: std.mem.Allocator,
+
         ttl: Ttl,
 
         random_index: Random.create(usize),
@@ -34,7 +33,7 @@ pub fn create(config: Config) type {
 
         records: [record_count]Record.Type,
 
-        pub fn init() Self {
+        pub fn init(allocator: std.mem.Allocator) Self {
             const ttl = Ttl.init();
             var records = [_]Record.Type{undefined} ** record_count;
 
@@ -43,6 +42,8 @@ pub fn create(config: Config) type {
             }
 
             return Self{
+                .allocator = allocator,
+
                 .ttl = ttl,
 
                 .random_warming_rate = Random.create(f64).init(record_count, {}),
@@ -77,8 +78,8 @@ pub fn create(config: Config) type {
                     try self.ttl.encode(self.ttl.get_now_with_ttl(ttl))
                 else {};
 
-                Record.free(allocator, record);
-                self.records[index] = try Record.new(allocator, hash, key, value, ttl_value);
+                Record.free(self.allocator, record);
+                self.records[index] = try Record.new(self.allocator, hash, key, value, ttl_value);
             }
         }
 
@@ -127,7 +128,7 @@ pub fn create(config: Config) type {
         }
 
         inline fn free(self: *Self, index: usize, record: Record.Type) void {
-            Record.free(allocator, record);
+            Record.free(self.allocator, record);
             self.records[index] = Record.default();
         }
     };
@@ -139,7 +140,7 @@ test "Record" {
     const config = Config{
         .record = .{
             .count = 1024,
-            .layout = .small,
+            .layout = .fast,
             .hash = .{
                 .type = u64,
             },
@@ -169,6 +170,8 @@ test "Record" {
         },
     };
 
+    const allocator = std.testing.allocator;
+
     const hash = xxhash(0, "hashhash");
     const key: []u8 = @constCast("hashhash")[0..];
     const value: []u8 = @constCast("test")[0..];
@@ -176,7 +179,7 @@ test "Record" {
 
     const HashMap = create(config);
 
-    var hash_map = HashMap.init();
+    var hash_map = HashMap.init(allocator);
 
     try expect(try hash_map.get(hash, key) == null);
 
