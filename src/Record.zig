@@ -168,8 +168,8 @@ fn create_padding_field(comptime struct_size_aligned: usize, comptime struct_siz
 
     return .{
         .name = "padding",
-        .type = Utils.create_uint(padding_size),
-        .default_value = @as(?*const anyopaque, @ptrCast(&@as(Utils.create_uint(padding_size), 0))),
+        .type = std.meta.Int(.unsigned, padding_size),
+        .default_value = @as(?*const anyopaque, @ptrCast(&@as(std.meta.Int(.unsigned, padding_size), 0))),
         .is_comptime = false,
         .alignment = 0,
     };
@@ -221,7 +221,7 @@ fn create_small_struct(comptime fields: anytype) type {
     return @Type(.{
         .Struct = .{
             .layout = .@"packed",
-            .backing_integer = Utils.create_uint(struct_size_aligned),
+            .backing_integer = std.meta.Int(.unsigned, struct_size_aligned),
             .fields = &padded_fields,
             .decls = &.{},
             .is_tuple = false,
@@ -250,13 +250,15 @@ pub fn create(comptime config: Config) type {
         create_ttl_field(config),
     };
 
+    const type_struct = switch (config.record.layout) {
+        .fast => create_fast_struct(fields),
+        .small => create_small_struct(fields),
+    };
+
     const ttl_type = if (config.record.ttl) |ttl| Utils.create_uint(ttl.max_size) else void;
 
     return struct {
-        pub const Type = switch (config.record.layout) {
-            .fast => create_fast_struct(fields),
-            .small => create_small_struct(fields),
-        };
+        pub const Type = type_struct;
 
         pub inline fn increase_temperature(record: *Type) void {
             record.temperature = Utils.saturating_add(config.record.temperature.type, record.temperature, 1);

@@ -139,7 +139,7 @@ test "Record" {
     const config = Config{
         .record = .{
             .count = 1024,
-            .layout = .fast,
+            .layout = .small,
             .hash = .{
                 .type = u64,
             },
