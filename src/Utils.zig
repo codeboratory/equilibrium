@@ -32,3 +32,13 @@ pub inline fn buffer_equals(a: []u8, b: []u8) bool {
 pub fn create_uint(value: usize) type {
     return std.meta.Int(.unsigned, bits_needed(value));
 }
+
+pub inline fn get_index(comptime T: type, count: usize, hash: T) usize {
+    const is_power_of_two = (count & (count - 1)) == 0;
+
+    if (is_power_of_two) {
+        return hash & (count - 1);
+    } else {
+        return hash % count;
+    }
+}

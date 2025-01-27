@@ -1,7 +1,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const StructField = std.builtin.Type.StructField;
+const Declaration = std.builtin.Type.Declaration;
 const Config = @import("Config.zig");
+const Random = @import("Random.zig");
 const Utils = @import("Utils.zig");
 const Constants = @import("Constants.zig");
 
@@ -248,8 +250,145 @@ pub fn create(comptime config: Config) type {
         create_ttl_field(config),
     };
 
-    return switch (config.record.layout) {
-        .fast => create_fast_struct(fields),
-        .small => create_small_struct(fields),
+    const ttl_type = if (config.record.ttl) |ttl| Utils.create_uint(ttl.max_size) else void;
+
+    return struct {
+        pub const Type = switch (config.record.layout) {
+            .fast => create_fast_struct(fields),
+            .small => create_small_struct(fields),
+        };
+
+        pub inline fn increase_temperature(record: *Type) void {
+            record.temperature = Utils.saturating_add(config.record.temperature.type, record.temperature, 1);
+        }
+
+        pub inline fn decrease_temperature(record: *Type) void {
+            record.temperature = Utils.saturating_sub(config.record.temperature.type, record.temperature, 1);
+        }
+
+        pub inline fn get_key(record: Type) []u8 {
+            return switch (config.record.key) {
+                .type => std.mem.asBytes(@constCast(&record.key))[0..],
+                .max_size => record.data[0..record.key_length],
+            };
+        }
+
+        pub inline fn get_value(record: Type) []u8 {
+            return switch (config.record.value) {
+                .type => std.mem.asBytes(@constCast(&record.value))[0..],
+                .max_size => switch (config.record.key) {
+                    .type => record.data[0..record.value_length],
+                    .max_size => record.data[record.key_length .. record.key_length + record.value_length],
+                },
+            };
+        }
+
+        pub inline fn get_total_length(record: Type) usize {
+            return switch (config.record.key) {
+                .type => switch (config.record.value) {
+                    .type => unreachable,
+                    .max_size => record.value_length,
+                },
+                .max_size => switch (config.record.value) {
+                    .type => record.key_length,
+                    .max_size => record.total_length,
+                },
+            };
+        }
+
+        pub inline fn can_data_be_freed(record: Type) bool {
+            return switch (config.record.key) {
+                .type => switch (config.record.value) {
+                    .type => false,
+                    .max_size => record.value_length != 0,
+                },
+                .max_size => switch (config.record.value) {
+                    .type => record.key_length != 0,
+                    .max_size => record.total_length != 0,
+                },
+            };
+        }
+
+        pub inline fn should_warm_up(random_warming_rate: f64) bool {
+            return random_warming_rate < config.record.temperature.warming_rate;
+        }
+
+        pub inline fn should_overwrite(random_temperature: config.record.temperature.type, record: Type) bool {
+            return record.temperature < random_temperature;
+        }
+
+        pub inline fn free(allocator: std.mem.Allocator, record: Type) void {
+            if (can_data_be_freed(record)) {
+                allocator.free(record.data[0..get_total_length(record)]);
+            }
+        }
+
+        pub inline fn create(allocator: std.mem.Allocator, hash: config.record.hash.type, key: []u8, value: []u8, ttl: ttl_type) !Type {
+            return Type{
+                .hash = hash,
+                .key = switch (config.record.key) {
+                    .type => std.mem.bytesToValue(config.record.key.type, key),
+                    .max_size => {},
+                },
+                .key_length = switch (config.record.key) {
+                    .type => {},
+                    .max_size => @intCast(key.len),
+                },
+                .value = switch (config.record.value) {
+                    .type => std.mem.bytesToValue(config.record.value.type, value),
+                    .max_size => {},
+                },
+                .value_length = switch (config.record.value) {
+                    .type => {},
+                    .max_size => @intCast(value.len),
+                },
+                .total_length = switch (config.record.key) {
+                    .type => {},
+                    .max_size => |k| switch (config.record.value) {
+                        .type => {},
+                        .max_size => |v| @as(Utils.create_uint(k + v), @intCast(key.len + value.len)),
+                    },
+                },
+                .temperature = std.math.maxInt(config.record.temperature.type) / 2,
+                .data = block: {
+                    if (config.record.key == .type and config.record.value == .type) {
+                        break :block undefined;
+                    }
+
+                    const key_length = switch (config.record.key) {
+                        .type => 0,
+                        .max_size => key.len,
+                    };
+
+                    const value_length = switch (config.record.value) {
+                        .type => 0,
+                        .max_size => value.len,
+                    };
+
+                    // TODO: use bitmap allocator instead
+                    const data = try allocator.alloc(u8, key_length + value_length);
+
+                    if (config.record.key == .max_size and config.record.value == .type) {
+                        @memcpy(data, key);
+                    }
+
+                    if (config.record.key == .type and config.record.value == .max_size) {
+                        @memcpy(data, value);
+                    }
+
+                    if (config.record.key == .max_size and config.record.value == .max_size) {
+                        @memcpy(data[0..key.len], key);
+                        @memcpy(data[key.len .. key.len + value.len], value);
+                    }
+
+                    break :block data.ptr;
+                },
+                .ttl = if (config.record.ttl) |_| ttl else undefined,
+                // .ttl = if (config.record.ttl) |_|
+                //     try self.encode_ttl(self.get_now_with_ttl(ttl))
+                // else
+                //     undefined,
+            };
+        }
     };
 }
