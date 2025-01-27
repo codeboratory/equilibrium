@@ -323,7 +323,39 @@ pub fn create(comptime config: Config) type {
             }
         }
 
-        pub inline fn create(allocator: std.mem.Allocator, hash: config.record.hash.type, key: []u8, value: []u8, ttl: ttl_type) !Type {
+        pub inline fn default() Type {
+            return Type{
+                .hash = 0,
+                .key = switch (config.record.key) {
+                    .type => 0,
+                    .max_size => {},
+                },
+                .key_length = switch (config.record.key) {
+                    .type => {},
+                    .max_size => 0,
+                },
+                .value = switch (config.record.value) {
+                    .type => 0,
+                    .max_size => {},
+                },
+                .value_length = switch (config.record.value) {
+                    .type => {},
+                    .max_size => 0,
+                },
+                .total_length = switch (config.record.key) {
+                    .type => {},
+                    .max_size => switch (config.record.value) {
+                        .type => {},
+                        .max_size => 0,
+                    },
+                },
+                .temperature = std.math.maxInt(config.record.temperature.type) / 2,
+                .data = undefined,
+                .ttl = if (config.record.ttl) |_| 0 else undefined,
+            };
+        }
+
+        pub inline fn new(allocator: std.mem.Allocator, hash: config.record.hash.type, key: []u8, value: []u8, ttl: ttl_type) !Type {
             return Type{
                 .hash = hash,
                 .key = switch (config.record.key) {
@@ -384,10 +416,6 @@ pub fn create(comptime config: Config) type {
                     break :block data.ptr;
                 },
                 .ttl = if (config.record.ttl) |_| ttl else undefined,
-                // .ttl = if (config.record.ttl) |_|
-                //     try self.encode_ttl(self.get_now_with_ttl(ttl))
-                // else
-                //     undefined,
             };
         }
     };
