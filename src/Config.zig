@@ -17,6 +17,7 @@ pub const Temperature = struct {
 
 pub const Ttl = struct {
     max_size: usize,
+    max_value: usize,
     resolution: enum(u64) {
         milisecond = 1,
         second = 1000,

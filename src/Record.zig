@@ -328,6 +328,8 @@ pub fn create(comptime config: Config) type {
         pub inline fn default() Type {
             return Type{
                 .hash = 0,
+                // TODO: move all of these into default method
+                // under each one of these structs
                 .key = switch (config.record.key) {
                     .type => 0,
                     .max_size => {},
@@ -351,7 +353,7 @@ pub fn create(comptime config: Config) type {
                         .max_size => 0,
                     },
                 },
-                .temperature = std.math.maxInt(config.record.temperature.type) / 2,
+                .temperature = 0,
                 .data = undefined,
                 .ttl = if (config.record.ttl) |_| 0 else undefined,
             };
@@ -399,7 +401,6 @@ pub fn create(comptime config: Config) type {
                         .max_size => value.len,
                     };
 
-                    // TODO: use bitmap allocator instead
                     const data = try allocator.alloc(u8, key_length + value_length);
 
                     if (config.record.key == .max_size and config.record.value == .type) {

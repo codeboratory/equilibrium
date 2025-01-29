@@ -1,18 +1,27 @@
 const std = @import("std");
+const net = std.net;
+const Server = @import("Server.zig");
 
 pub fn main() !void {
-    const num_threads = 4;
-    var threads: [num_threads]std.Thread = undefined;
+    var server = try Server.init();
+    defer server.deinit();
 
-    for (0..num_threads) |i| {
-        threads[i] = try std.Thread.spawn(.{}, worker, .{i});
-    }
-
-    for (threads) |thread| {
-        thread.join();
+    while (true) {
+        _ = try server.accept();
     }
 }
 
-fn worker(id: usize) void {
-    std.debug.print("Thread {d} is running\n", .{id});
+fn client(listen_address: net.Address) !void {
+    const testeMessage = "This message is a test.";
+
+    var clientCon = try net.tcpConnectToAddress(listen_address);
+    defer clientCon.close();
+
+    _ = try clientCon.writeAll(testeMessage);
+
+    var buf: [1024]u8 = undefined;
+
+    @memset(&buf, 0);
+
+    _ = try clientCon.read(&buf);
 }

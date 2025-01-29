@@ -1,21 +1,26 @@
 const std = @import("std");
 const Config = @import("Config.zig");
-const record_create = @import("Record.zig").create;
-const Random = @import("Random.zig");
+const Testing = @import("Testing.zig");
 const Utils = @import("Utils.zig");
 const Constants = @import("Constants.zig");
+
+const record_create = @import("Record.zig").create;
+const random_create = @import("Random.zig").create;
 const ttl_create = @import("Ttl.zig").create;
 
 const xxhash = std.hash.XxHash64.hash;
 const expect = std.testing.expect;
 
-pub fn create(config: Config) type {
+pub fn create(comptime config: Config) type {
     const Record = record_create(config);
+    const Random = random_create(config);
+    // TODO: do not create if ttl is null
     const Ttl = ttl_create(config);
 
+    // TODO: use different type for Record.ttl (max_size)
+    // and ttl passed into functions (max_value)
     const ttl_type = if (config.record.ttl) |ttl| Utils.create_uint(ttl.max_size) else void;
     const hash_type = config.record.hash.type;
-    const temp_type = config.record.temperature.type;
     const record_count = config.record.count;
 
     const HashMap = struct {
@@ -24,16 +29,13 @@ pub fn create(config: Config) type {
         allocator: std.mem.Allocator,
 
         ttl: Ttl,
+        random: Random,
 
-        random_index: Random.create(usize),
-        // NOTE: should be in Record but Record
-        // is comptime so we cannot init it
-        random_warming_rate: Random.create(f64),
-        random_temperature: Random.create(temp_type),
-
+        // NOTE: maybe could also use allocator
         records: [record_count]Record.Type,
 
-        pub fn init(allocator: std.mem.Allocator) Self {
+        pub fn init(allocator: std.mem.Allocator) !Self {
+            // NOTE: egh I don't like this
             const ttl = Ttl.init();
             var records = [_]Record.Type{undefined} ** record_count;
 
@@ -45,10 +47,7 @@ pub fn create(config: Config) type {
                 .allocator = allocator,
 
                 .ttl = ttl,
-
-                .random_warming_rate = Random.create(f64).init(record_count, {}),
-                .random_index = Random.create(usize).init(record_count, record_count),
-                .random_temperature = Random.create(temp_type).init(record_count, std.math.maxInt(temp_type)),
+                .random = try Random.init(allocator),
 
                 .records = records,
             };
@@ -73,10 +72,8 @@ pub fn create(config: Config) type {
             const hash_equals = record.hash == hash;
             const key_equals = Utils.buffer_equals(key, Record.get_key(record));
 
-            if (hash_undefined or (hash_equals and key_equals) or Record.should_overwrite(self.random_temperature.next(), record)) {
-                const ttl_value = if (config.record.ttl) |_|
-                    try self.ttl.encode(self.ttl.get_now_with_ttl(ttl))
-                else {};
+            if (hash_undefined or (hash_equals and key_equals) or Record.should_overwrite(self.random.temperature.next(), record)) {
+                const ttl_value = if (config.record.ttl) |_| try self.ttl.encode(try self.ttl.get_now_with_ttl(ttl)) else {};
 
                 Record.free(self.allocator, record);
                 self.records[index] = try Record.new(self.allocator, hash, key, value, ttl_value);
@@ -96,12 +93,12 @@ pub fn create(config: Config) type {
                 const ttl = try self.ttl.decode(record.ttl);
 
                 if (now > ttl) {
-                    self.free(index, record);
+                    self.free_record(index, record);
                     return null;
                 }
             }
 
-            if (Record.should_warm_up(self.random_warming_rate.next())) {
+            if (Record.should_warm_up(self.random.warming_rate.next())) {
                 Record.increase_temperature(&record);
 
                 var victim = self.get_victim();
@@ -119,15 +116,19 @@ pub fn create(config: Config) type {
             const key_equals = Utils.buffer_equals(key, Record.get_key(record));
 
             if (hash_equals and key_equals) {
-                self.free(index, record);
+                self.free_record(index, record);
             }
         }
 
-        inline fn get_victim(self: *Self) Record.Type {
-            return self.records[self.random_index.next()];
+        pub fn free(self: Self) void {
+            self.random.free();
         }
 
-        inline fn free(self: *Self, index: usize, record: Record.Type) void {
+        inline fn get_victim(self: *Self) Record.Type {
+            return self.records[self.random.index.next()];
+        }
+
+        inline fn free_record(self: *Self, index: usize, record: Record.Type) void {
             Record.free(self.allocator, record);
             self.records[index] = Record.default();
         }
@@ -137,39 +138,7 @@ pub fn create(config: Config) type {
 }
 
 test "Record" {
-    const config = Config{
-        .record = .{
-            .count = 1024,
-            .layout = .fast,
-            .hash = .{
-                .type = u64,
-            },
-            .key = .{
-                .type = u64,
-                // .max_size = 1024,
-            },
-            .value = .{
-                // .type = u32,
-                .max_size = 64 * 1024 * 1024, // 64 Mb
-            },
-            .temperature = .{
-                .type = u8,
-                .warming_rate = 0.05,
-            },
-            .ttl = .{
-                // ~136 years
-                .max_size = 4294967296,
-                // NOTE: maybe I could cap the TTL size
-                // and make it different from the absolute
-                // size which is max_size
-                .resolution = .second,
-            },
-        },
-        .allocator = .{
-            .chunk_size = 32 * 1024, // 32 Kb
-        },
-    };
-
+    const config = Testing.config_default;
     const allocator = std.testing.allocator;
 
     const hash = xxhash(0, "hashhash");
@@ -179,7 +148,8 @@ test "Record" {
 
     const HashMap = create(config);
 
-    var hash_map = HashMap.init(allocator);
+    var hash_map = try HashMap.init(allocator);
+    defer hash_map.free();
 
     try expect(try hash_map.get(hash, key) == null);
 
